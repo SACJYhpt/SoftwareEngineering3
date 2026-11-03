@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.api import create_app
 from app.config import Settings
-from app.models import Unit, UnitManager, User
+from app.models import EventType, Unit, UnitManager, User
 from app.security import hash_password, issue_token
 
 
@@ -19,7 +19,8 @@ def application(tmp_path):
                         User(id=3, email="manager@test.invalid", name="測試管理者", role="manager", password_hash=hashed),
                         User(id=4, email="admin@test.invalid", name="測試管理員", role="admin", password_hash=hashed),
                         User(id=5, email="manager2@test.invalid", name="同單位管理者", role="manager", password_hash=hashed)])
-            db.add_all([Unit(id=1, name="測試系所"), Unit(id=2, name="測試社團"), Unit(id=3, name="其他單位")])
+            db.add_all([Unit(id=1, name="測試系所"), Unit(id=2, name="測試社團", kind="club"), Unit(id=3, name="其他單位")])
+            db.add_all([EventType(name="講座"), EventType(name="參訪"), EventType(name="停用類型", is_active=False)])
             db.flush()
             db.add_all([UnitManager(user_id=3, unit_id=1), UnitManager(user_id=3, unit_id=2),
                         UnitManager(user_id=5, unit_id=1)])

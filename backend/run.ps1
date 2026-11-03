@@ -1,4 +1,4 @@
-param([switch]$SeedDemo)
+param([switch]$SeedDemo, [switch]$Reset)
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
@@ -18,7 +18,8 @@ try {
         [System.IO.File]::WriteAllText((Join-Path $PSScriptRoot '.env'), $envText, (New-Object System.Text.UTF8Encoding($false)))
     }
     if ($SeedDemo) {
-        & $pythonPath seed_demo.py
+        $initArgs = @("init_data.py", "--demo"); if ($Reset) { $initArgs += "--reset" }
+        & $pythonPath @initArgs
         if ($LASTEXITCODE -ne 0) { throw 'Demo seed failed.' }
     }
     Write-Host 'Open http://127.0.0.1:8000/docs to test the backend. Ctrl+C stops it.'

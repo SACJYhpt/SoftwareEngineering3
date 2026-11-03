@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
 
-from .models import Event, Registration, Unit, UnitManager, User
+from .models import Event, EventType, LoginThrottle, Registration, Unit, UnitManager, User
+
+MAX_LOGIN_FAILURES = 5
+LOCKOUT = timedelta(minutes=10)
 
 
 def can_manage_unit(db, user_id: int, unit_id: int) -> bool:
@@ -33,8 +36,42 @@ def user_view(db, user):
     # Account context for the MVP unit selector; no unit CRUD or role shortcut.
     units = db.scalars(select(Unit).join(UnitManager, UnitManager.unit_id == Unit.id)
                        .where(UnitManager.user_id == user.id).order_by(Unit.id)).all()
+    department = db.get(Unit, user.department_id) if user.department_id else None
     return dict(id=user.id, email=user.email, name=user.name, role=user.role,
+                identity=user.identity, grade=user.grade,
+                department=dict(id=department.id, name=department.name) if department else None,
                 managed_units=[dict(id=unit.id, name=unit.name) for unit in units])
+
+
+def lockout_remaining(db, email, now):
+    """Minutes left on an active lockout for this email, or None."""
+    throttle = db.get(LoginThrottle, email)
+    if throttle is None or throttle.locked_until is None or now >= throttle.locked_until:
+        return None
+    return max(1, -(-int((throttle.locked_until - now).total_seconds()) // 60))
+
+
+def record_login_result(db, email, success, now):
+    """Reset on success; lock for LOCKOUT after MAX_LOGIN_FAILURES in a row."""
+    throttle = db.get(LoginThrottle, email)
+    if success:
+        if throttle is not None:
+            db.delete(throttle)
+        db.commit()
+        return
+    if throttle is None:
+        throttle = LoginThrottle(email=email, failed_count=0)
+        db.add(throttle)
+    if throttle.locked_until is not None and now >= throttle.locked_until:
+        throttle.failed_count, throttle.locked_until = 0, None
+    throttle.failed_count += 1
+    if throttle.failed_count >= MAX_LOGIN_FAILURES:
+        throttle.locked_until = now + LOCKOUT
+    db.commit()
+
+
+def list_event_types(db):
+    return db.scalars(select(EventType).where(EventType.is_active.is_(True)).order_by(EventType.id)).all()
 
 
 def utc_now():
@@ -70,11 +107,14 @@ def event_status(event, count, now):
     return "開放中"
 
 
-def event_view(db, event, user):
-    count = count_registrations(db, event.id)
-    registered = user is not None and find_registration(db, event.id, user.id) is not None
+def event_view(db, event, user, count=None, registered=None, unit=None):
+    """Build the API view; list_events passes prefetched values to avoid per-event queries."""
+    if count is None:
+        count = count_registrations(db, event.id)
+    if registered is None:
+        registered = user is not None and find_registration(db, event.id, user.id) is not None
     status = event_status(event, count, utc_now())
-    unit = db.get(Unit, event.unit_id)
+    unit = unit or db.get(Unit, event.unit_id)
     return dict(id=event.id, name=event.name, category=event.category,
                 type=event.category, unit_id=event.unit_id, unit=dict(id=unit.id, name=unit.name),
                 contact_information=event.contact_information,
@@ -95,7 +135,9 @@ def create_event(db, payload, user_id):
     if db.get(Unit, payload.unit_id) is None:
         raise HTTPException(404, {"code": "UNIT_NOT_FOUND", "message": "找不到單位"})
     require_manage_unit(db, user_id, payload.unit_id)
-    start = payload.start_time.astimezone(timezone.utc).replace(tzinfo=None)
+    if payload.type not in {item.name for item in list_event_types(db)}:
+        raise HTTPException(422, {"code": "EVENT_TYPE_INVALID", "message": "請從清單選擇活動類型"})
+    start =payload.start_time.astimezone(timezone.utc).replace(tzinfo=None)
     if start < utc_now():
         raise HTTPException(422, {"code": "EVENT_START_IN_PAST", "message": "活動開始時間不得早於現在"})
     event = Event(unit_id=payload.unit_id, owner_id=user_id, name=payload.name, category=payload.type,
@@ -124,7 +166,18 @@ def get_public_event(db, event_id):
 def list_events(db, user):
     events = db.scalars(select(Event).where(Event.is_public.is_(True), Event.is_cancelled.is_(False),
                                            Event.starts_at > utc_now()).order_by(Event.starts_at, Event.id)).all()
-    return [event_view(db, event, user) for event in events]
+    ids = [event.id for event in events]
+    if not ids:
+        return []
+    counts = dict(db.execute(select(Registration.event_id, func.count(Registration.id))
+                             .where(Registration.event_id.in_(ids)).group_by(Registration.event_id)).all())
+    mine = set()
+    if user is not None:
+        mine = set(db.scalars(select(Registration.event_id)
+                              .where(Registration.user_id == user.id, Registration.event_id.in_(ids))))
+    units = {unit.id: unit for unit in db.scalars(select(Unit).where(Unit.id.in_({e.unit_id for e in events})))}
+    return [event_view(db, event, user, counts.get(event.id, 0), event.id in mine, units[event.unit_id])
+            for event in events]
 
 
 def register(session_factory, event_id, user_id):

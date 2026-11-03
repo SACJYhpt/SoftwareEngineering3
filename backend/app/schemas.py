@@ -14,11 +14,20 @@ class UnitResponse(BaseModel):
     name: str
 
 
+class EventTypeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
     name: str
     role: str
+    identity: str | None = None
+    department: UnitResponse | None = None
+    grade: int | None = None
     managed_units: list[UnitResponse]
 
 
