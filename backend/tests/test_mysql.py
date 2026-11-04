@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 from app.database import Base, build_database
 from app.models import Event, Registration, Unit, User
 from app.security import hash_password
-from app.services import register, utc_now
+from app.services import cancel_registration, register, utc_now
 
 
 @pytest.mark.skipif(not os.getenv("MYSQL_TEST_URL"), reason="未設定專用 MySQL 測試資料庫；不可用 SQLite 結果代替 MySQL 驗收")
@@ -31,11 +31,11 @@ def test_mysql_concurrent_capacity_and_duplicate():
     try:
         with sessions.begin() as db:
             hashed = hash_password("TemporaryTestOnly!2026")
-            manager = User(email=f"{run_id}-manager@test.invalid", name="測試管理者", role="manager", password_hash=hashed)
+            manager = User(email=f"{run_id}-manager@test.invalid", name="測試管理者", role="manager", password_hash=hashed, email_verified=True)
             db.add(manager)
             db.flush()
             user_ids.append(manager.id)
-            people = [User(email=f"{run_id}-{i}@test.invalid", name="測試會員", password_hash=hashed) for i in range(1000)]
+            people = [User(email=f"{run_id}-{i}@test.invalid", name="測試會員", password_hash=hashed, email_verified=True) for i in range(1000)]
             db.add_all(people)
             db.flush()
             member_ids = [user.id for user in people]
@@ -63,16 +63,27 @@ def test_mysql_concurrent_capacity_and_duplicate():
             results = list(executor.map(attempt, member_ids))
         assert sum(item is not None for item in results) == 100
         with sessions() as db:
-            assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id == event_id)) == 100
-            winner = db.scalar(select(Registration.user_id).where(Registration.event_id == event_id).limit(1))
+            assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id == event_id, Registration.status == "registered")) == 100
+            winner = db.scalar(select(Registration.user_id).where(Registration.event_id == event_id, Registration.status == "registered").limit(1))
         with ThreadPoolExecutor(max_workers=16) as executor:
             repeated = list(executor.map(lambda _: register(sessions, event_id, winner), range(40)))
         assert all(item["already_registered"] for item in repeated)
         assert len({item["registration_id"] for item in repeated}) == 1
+        # E02 uses the same event row lock: one released seat admits one person.
+        with sessions() as db:
+            registered_ids = set(db.scalars(select(Registration.user_id).where(Registration.event_id == event_id, Registration.status == "registered")))
+        cancelled = cancel_registration(sessions, event_id, winner)
+        assert cancelled["registration_count"] == 99
+        contenders = [user_id for user_id in member_ids if user_id not in registered_ids][:32]
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            replacements = list(executor.map(attempt, contenders))
+        assert sum(item is not None for item in replacements) == 1
+        with sessions() as db:
+            assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id == event_id, Registration.status == "registered")) == 100
     finally:
         with sessions.begin() as db:
             if event_id is not None:
-                db.execute(delete(Registration).where(Registration.event_id == event_id))
+                db.execute(delete(Registration).where(Registration.event_id == event_id, Registration.status == "registered"))
                 db.execute(delete(Event).where(Event.id == event_id))
             if unit_id is not None:
                 db.execute(delete(Unit).where(Unit.id == unit_id))

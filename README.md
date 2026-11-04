@@ -1,7 +1,7 @@
 # 海大活動報名系統
 
 軟體工程期末專案。前端 Vue 3 + Vite，後端 FastAPI + SQLAlchemy，資料庫 MySQL（本機開發可用 SQLite）。
-需求以《軟體需求文件 (SRD)》為準；目前完成 **MVP**（R2、R3 尚未開始）。
+需求以《軟體需求文件 (SRD)》為準；此整合分支保留團隊 **MVP**，並完成 SRD v2（版次 0.4）的 **R2 後端**。前端維持 MVP；正式 SMTP、MySQL、備份排程與 UI 尚待團隊環境驗收。
 
 | 資料夾 | 內容 |
 |---|---|
@@ -19,6 +19,10 @@
 | — | FR-01-12 初始化資料、NFR-05-04 登入鎖定 | `backend/init_data.py`、登入 API |
 
 MVP 不含註冊。帳號、單位、活動類型與管理者授權由 `init_data.py` 建立（見下方步驟 2）。
+
+本分支以 `437fd2d`（`feature/mvp-complete`／PR #4）為基礎，沿用團隊登入、登出、前端與架構。
+R2 的啟動、資料庫變更、前端 API 契約、SMTP、worker、備份還原及驗收界線，請先讀 [R2 後端交接](backend/docs/R2交接.md)。
+**R2 有資料表變更，請先用全新測試資料庫，不要直接拿舊 demo.db 啟動，也不要為了測試對團隊資料庫執行 --reset。**
 
 ## 第一次執行
 
@@ -38,11 +42,13 @@ venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.t
 ### 2. 建立資料庫與測試帳號
 
 ```powershell
-venv\Scripts\python.exe init_data.py --demo --reset
+$env:DATABASE_URL = 'sqlite:///./r2-demo.db'
+venv\Scripts\python.exe init_data.py --demo
 ```
 
 - `--demo`：建立 MVP 驗收用的測試帳號與示範活動（只能在 `APP_ENV=development` 使用）。
-- `--reset`：先刪除並重建所有資料表。**資料表結構有變更時必須加**，例如從舊版程式升級上來。
+- 上例使用全新的 R2 測試資料庫，舊 demo.db 保留。若 r2-demo.db 已存在且結構過舊，改用另一個尚不存在的檔名。
+- `--reset`：只供確認可丟棄的本機資料，會先刪除並重建所有資料表；本次不需要它，不可對團隊資料庫執行。
 - 不加參數只建立正式的基本資料：系統管理員、單位清單、活動類型。系統管理員的密碼取自 `INIT_ADMIN_PASSWORD`；沒有設定時會隨機產生，並只在畫面上顯示一次。
 
 示範帳號的密碼都是 `DemoOnly!2026`（只供本機測試）：
@@ -55,7 +61,7 @@ venv\Scripts\python.exe init_data.py --demo --reset
 | `teacher@demo.ntou.edu.tw`、`staff@demo.ntou.edu.tw` | 教師、行政人員 | 其他身分別 |
 | `manager@demo.ntou.edu.tw` | 資工系活動管理者（一個單位） | 建立活動時自動帶入主辦單位 |
 | `multi@demo.ntou.edu.tw` | 吉他社、學生會的活動管理者（兩個單位） | 建立活動時選擇主辦單位 |
-| `admin@demo.ntou.edu.tw` | 系統管理員 | MVP 尚無管理功能 |
+| `admin@demo.ntou.edu.tw` | 系統管理員 | 可呼叫 R2 管理 API，前端管理畫面另行串接 |
 
 ### 3. 啟動後端
 
@@ -84,7 +90,12 @@ cd backend
 venv\Scripts\python.exe -m pytest -q
 ```
 
-預期結果：`99 passed, 1 skipped`。被略過的是 MySQL 併發測試，要先設定 `MYSQL_TEST_URL` 才會執行（見 backend/README.md）。
+團隊 MVP 基準結果為 `99 passed, 1 skipped`；本分支另有 SRD v2 R2 測試，最新結果見 R2 交接文件。
+被略過的是 MySQL 併發測試，要先設定 `MYSQL_TEST_URL` 才會執行（見 backend/README.md）。
+
+2026-11-04 SRD v2 R2 完整回歸：**155 passed, 1 skipped, 1 warning**；warning 為原有 Starlette/httpx 棄用提醒。
+另用一次性 SQLite 資料庫、實際 HTTP、本機 SMTP 與 worker 驗證註冊驗證、重設密碼、活動異動／取消通知、
+本人取消與重新報名、單位授權、CLI 備份及空資料庫還原；`/docs` 正常。外部 SMTP 與 MySQL 尚未驗收。
 
 ### 前端建置檢查
 
@@ -93,9 +104,12 @@ cd frontend
 npm run build
 ```
 
+2026-11-04：在本分支執行 `npm ci --ignore-scripts`、`npm run build` 通過，前端原始碼與鎖定檔未改動。
+這是建置驗證，不代表所有瀏覽器與 UI 情境已人工驗收。
+
 ### 手動驗收（對照 SRD 的 MVP 測試方法）
 
-執行 `init_data.py --demo --reset` 後，依序操作：
+依上述方式在全新測試資料庫執行 `init_data.py --demo` 後，依序操作：
 
 1. **瀏覽（B01、B02、B09）**：未登入開啟首頁，看到示範活動依開始時間排序，「不限名額交流會」顯示「0 / 不限」。點進任一活動，詳情頁不需登入就能看到時間、地點、主辦單位、聯絡方式、報名期間與狀態。
 2. **登入後回到原頁（D02）**：未登入時在「最後一個名額」點「登入後報名」，會被導到登入頁；以 `student1` 登入後回到原活動頁。
@@ -112,6 +126,6 @@ npm run build
 
 ## 已知限制
 
-- MVP 尚未包含註冊、搜尋、取消報名、候補等 R2／R3 功能。
-- 還沒有資料庫 migration：資料表結構變更後，本機請用 `init_data.py --demo --reset` 重建。R2 開始前應導入 Alembic。
+- R2 後端已提供註冊、搜尋、活動管理等 API；R2 前端畫面尚未串接。候補、資格、撞期、報到等 R3 功能未實作。
+- 尚無自動 migration；用全新資料庫測 R2。團隊既有資料由資料庫負責人安排升級，變更清單與全新 MySQL DDL 參考見 R2 交接文件。
 - HTTPS、部署、跨瀏覽器驗收（NFR-04-01、NFR-05-01）與易用性測試（NFR-03-02）要在部署環境另外進行。

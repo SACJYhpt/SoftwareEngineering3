@@ -172,7 +172,7 @@ def test_1000_attempts_do_not_exceed_100_seats(application):
     event_id = add_event(application, capacity=100)
     with application.state.sessions.begin() as db:
         hashed = db.get(User, 1).password_hash
-        db.add_all([User(id=i, email=f"user{i}@test.invalid", name=f"User {i}", password_hash=hashed)
+        db.add_all([User(id=i, email=f"user{i}@test.invalid", name=f"User {i}", password_hash=hashed, email_verified=True)
                     for i in range(10, 1010)])
 
     def attempt(user_id):

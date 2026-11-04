@@ -11,11 +11,12 @@ import os
 import secrets
 from datetime import timedelta
 
-from sqlalchemy import inspect, select
+from sqlalchemy import select
 
 from app.config import Settings
-from app.database import Base, build_database
-from app.models import Event, EventType, Registration, Unit, UnitManager, User
+from app.database import Base, build_database, schema_is_current
+from app.models import (Event, EventType, OrganizerAcknowledgement, PublishedDocument,
+                        Registration, Unit, UnitManager, User)
 from app.security import hash_password
 from app.services import utc_now
 
@@ -51,18 +52,6 @@ DEMO_EVENTS = [
 ]
 
 
-def schema_is_current(engine):
-    """True when every model column exists; create_all() never alters old tables."""
-    inspector = inspect(engine)
-    for table in Base.metadata.sorted_tables:
-        if not inspector.has_table(table.name):
-            continue
-        existing = {column["name"] for column in inspector.get_columns(table.name)}
-        if {column.name for column in table.columns} - existing:
-            return False
-    return True
-
-
 def ensure_units(db):
     units = {}
     for name, kind in UNITS:
@@ -75,8 +64,10 @@ def ensure_units(db):
     return units
 
 
-def ensure_base(db, admin_email, admin_password):
+def ensure_base(db, admin_email, admin_password, development=False):
     ensure_units(db)
+    if development:
+        ensure_documents(db)
     for name in EVENT_TYPES:
         if db.scalar(select(EventType).where(EventType.name == name)) is None:
             db.add(EventType(name=name))
@@ -84,11 +75,29 @@ def ensure_base(db, admin_email, admin_password):
         generated = admin_password is None
         password = admin_password or secrets.token_urlsafe(12)
         db.add(User(email=admin_email, name="系統管理員", role="admin", identity="staff",
-                    password_hash=hash_password(password)))
+                    password_hash=hash_password(password), email_verified=True))
         if generated:
             print(f"已建立系統管理員 {admin_email}，臨時密碼：{password}（只顯示這一次，請妥善保存）")
         else:
             print(f"已建立系統管理員 {admin_email}")
+
+
+def ensure_documents(db):
+    # Development drafts describe actual R2 behavior; the team must approve and
+    # publish its own privacy notice and organizer terms before a real release.
+    contents = {
+        "privacy": "[開發草案，正式上線前須團隊確認] 蒐集姓名、學校信箱、身分別、系所、學生年級，用於帳號驗證及活動報名。"
+                   "報名資料可由活動所屬單位的所有活動管理者查看。R2 目前保留帳號與報名資料，尚無自動到期刪除；"
+                   "個資保存期限、刪除申請方式及適用法規須由團隊查證後公布，不承諾尚未實作的自動刪除。",
+        "organizer": "[開發草案，正式上線前須團隊確認] 主辦單位應確認活動資訊正確，僅為辦理活動使用報名資料，"
+                     "妥善保護名單；異動與取消須透過系統通知參加者，不得任意散布個人資料。",
+        "faq": "R2：以學校信箱註冊並驗證後登入；可搜尋、篩選活動及報名。截止前可取消並重新報名，截止當下起不可取消。"
+               "密碼忘記可申請重設；活動異動與取消會排入通知佇列。候補、截止後取消申請及報到尚未釋出。",
+    }
+    for kind, content in contents.items():
+        if db.scalar(select(PublishedDocument.id).where(PublishedDocument.kind == kind).limit(1)) is None:
+            db.add(PublishedDocument(kind=kind, version=1, content=content, published_at=utc_now()))
+    db.flush()
 
 
 def ensure_demo(db, units):
@@ -98,7 +107,7 @@ def ensure_demo(db, units):
         user = db.scalar(select(User).where(User.email == email))
         if user is None:
             user = User(email=email, name=name, role=role, identity=identity, grade=grade,
-                        department_id=units[department].id, password_hash=hash_password(DEMO_PASSWORD))
+                        department_id=units[department].id, password_hash=hash_password(DEMO_PASSWORD), email_verified=True)
             db.add(user)
             db.flush()
         people[email] = user
@@ -143,7 +152,15 @@ def main(argv=None):
             if args.demo:
                 # Demo accounts first: the base step then finds the demo admin and creates no second admin.
                 ensure_demo(db, ensure_units(db))
-            ensure_base(db, admin_email, os.getenv("INIT_ADMIN_PASSWORD"))
+            ensure_base(db, admin_email, os.getenv("INIT_ADMIN_PASSWORD"), settings.app_env == "development")
+            if args.demo:
+                document = db.scalar(select(PublishedDocument).where(PublishedDocument.kind == "organizer")
+                                     .order_by(PublishedDocument.version.desc()).limit(1))
+                # Only simulated demo accounts get seeded acknowledgements.
+                for email, *_ in DEMO_USERS:
+                    user = db.scalar(select(User).where(User.email == email))
+                    if db.get(OrganizerAcknowledgement, (user.id, document.id)) is None:
+                        db.add(OrganizerAcknowledgement(user_id=user.id, document_id=document.id, acknowledged_at=utc_now()))
     finally:
         engine.dispose()
     print("初始化完成。重跑不會刪除或重複建立資料。")
