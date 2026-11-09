@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.database import build_database
-from app.models import Event, Registration, Unit, UnitManager, User
+from app.models import Event, EventType, Registration, Unit, UnitManager, User
 from app.services import can_manage_unit, require_manage_unit, utc_now
 
 
@@ -86,23 +86,66 @@ def test_event_must_reference_existing_unit(application):
                          registration_opens_at=now - timedelta(days=1), registration_closes_at=now + timedelta(days=1)))
 
 
-def test_demo_seed_supports_new_schema_without_duplicate_data(tmp_path, monkeypatch):
-    from seed_demo import main
+def test_demo_init_supports_new_schema_without_duplicate_data(tmp_path, monkeypatch):
+    from init_data import DEMO_EVENTS, DEMO_USERS, EVENT_TYPES, UNITS, main
 
     url = f"sqlite:///{(tmp_path / 'new-demo.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("JWT_SECRET", "test-demo-secret-" * 4)
-    main()
-    main()
+    main(["--demo"])
+    main(["--demo"])
     engine, sessions = build_database(url)
     try:
         with sessions() as db:
-            assert db.scalar(select(func.count(Unit.id))) == 1
-            assert db.scalar(select(func.count(UnitManager.user_id))) == 1
-            assert db.scalar(select(func.count(Event.id))) == 6
+            assert db.scalar(select(func.count(Unit.id))) == len(UNITS)
+            assert db.scalar(select(func.count(EventType.id))) == len(EVENT_TYPES)
+            assert db.scalar(select(func.count(User.id))) == len(DEMO_USERS)
+            assert db.scalar(select(func.count(User.id)).where(User.role == "admin")) == 1
+            assert db.scalar(select(func.count(UnitManager.user_id))) == 3
+            assert db.scalar(select(func.count(Event.id))) == len(DEMO_EVENTS)
             assert db.scalar(select(func.count(Registration.id))) == 1
             event = db.scalar(select(Event).limit(1))
             assert can_manage_unit(db, event.owner_id, event.unit_id)
+            # FR-01-12: test accounts cover different identities, departments and grades.
+            students = db.scalars(select(User).where(User.identity == "student")).all()
+            assert len({u.department_id for u in students}) >= 3 and len({u.grade for u in students}) >= 3
+            assert {u.identity for u in db.scalars(select(User))} == {"student", "teacher", "staff"}
+            assert all(not u.password_hash.startswith("DemoOnly") for u in db.scalars(select(User)))
     finally:
         engine.dispose()
+
+
+def test_base_init_creates_one_admin_and_refuses_old_schema(tmp_path, monkeypatch, capsys):
+    from init_data import main
+
+    url = f"sqlite:///{(tmp_path / 'base.db').as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setenv("JWT_SECRET", "test-demo-secret-" * 4)
+    main([])
+    assert "臨時密碼" in capsys.readouterr().out
+    main([])
+    assert "臨時密碼" not in capsys.readouterr().out
+    engine, sessions = build_database(url)
+    try:
+        with sessions() as db:
+            assert db.scalar(select(func.count(User.id))) == 1
+            assert db.scalar(select(User)).role == "admin"
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE users DROP COLUMN grade")
+    finally:
+        engine.dispose()
+    with pytest.raises(SystemExit):
+        main([])
+    main(["--reset"])
+
+
+def test_demo_and_reset_are_development_only(tmp_path, monkeypatch):
+    from init_data import main
+
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://u:p@127.0.0.1:1/never")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("JWT_SECRET", "test-demo-secret-" * 4)
+    for args in (["--demo"], ["--reset"]):
+        with pytest.raises(SystemExit):
+            main(args)

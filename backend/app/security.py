@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import secrets
+
 import jwt
 from pwdlib import PasswordHash
 
@@ -23,12 +25,13 @@ def issue_token(user_id: int, settings) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode({"sub": str(user_id), "iat": now,
                        "exp": now + timedelta(minutes=settings.access_token_minutes),
-                       "iss": "ntou-events", "aud": "ntou-events-api"},
+                       "iss": "ntou-events", "aud": "ntou-events-api",
+                       "jti": secrets.token_urlsafe(24)},
                       settings.jwt_secret, algorithm="HS256")
 
 
-def decode_token(token: str, settings) -> int:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"],
-                         issuer="ntou-events", audience="ntou-events-api",
-                         options={"require": ["sub", "exp", "iat", "iss", "aud"]})
-    return int(payload["sub"])
+def decode_token(token: str, settings) -> dict:
+    """Return the verified claims; callers read sub, jti and exp."""
+    return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"],
+                      issuer="ntou-events", audience="ntou-events-api",
+                      options={"require": ["sub", "exp", "iat", "iss", "aud", "jti"]})

@@ -1,61 +1,76 @@
 <template>
     <nav class="navbar">
-        <div class="nav-brand">海大活動報名系統</div>
-        <div class="nav-search">
-            <input type="text" placeholder="搜尋活動關鍵字..." class="search-input" />
-            <button class="search-btn">搜尋</button>
-        </div>
+        <router-link to="/" class="nav-brand">海大活動報名系統</router-link>
         <div class="nav-actions">
-            <button class="btn-outline">登入</button>
-            <button class="btn-primary">註冊</button>
+            <router-link v-if="managedUnits.length" to="/events/new" class="btn btn-outline">建立活動</router-link>
+            <template v-if="isLoggedIn">
+                <span class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</span>
+                <button class="btn btn-outline" :disabled="busy" @click="onLogout">登出</button>
+            </template>
+            <router-link v-else :to="{ path: '/login', query: { redirect: loginRedirect } }" class="btn">登入</router-link>
         </div>
     </nav>
 </template>
 
+<script setup>
+    import { computed, ref } from 'vue'
+    import { useRoute, useRouter } from 'vue-router'
+    import { auth, isLoggedIn, logout, managedUnits } from '../auth'
+
+    const route = useRoute()
+    const router = useRouter()
+    const busy = ref(false)
+
+    // Return to the current page after logging in, except from the login page itself.
+    const loginRedirect = computed(() => (route.path === '/login' ? route.query.redirect : route.fullPath))
+
+    async function onLogout() {
+        busy.value = true
+        try {
+            await logout()
+        } finally {
+            busy.value = false
+            router.push('/')
+        }
+    }
+</script>
+
 <style scoped>
     .navbar {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 24px;
+        gap: 8px 16px;
+        padding: 10px 16px;
         background-color: #fff;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
         position: sticky;
         top: 0;
         z-index: 100;
     }
     .nav-brand {
-        font-size: 1.25rem;
+        font-size: 1.2rem;
         font-weight: bold;
-        color: #004d99;
+        color: var(--brand);
+        text-decoration: none;
     }
-    .nav-search {
+    .nav-actions {
         display: flex;
+        flex-wrap: wrap;
+        align-items: center;
         gap: 8px;
-        flex: 1;
-        max-width: 400px;
     }
-    .search-input {
-        flex: 1;
-        padding: 8px 12px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+    .nav-user {
+        max-width: 12em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--muted);
     }
-    .btn-primary, .btn-outline, .search-btn {
-        padding: 8px 16px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: bold;
-    }
-    .btn-primary, .search-btn {
-        background-color: #004d99;
-        color: white;
-        border: none;
-    }
-    .btn-outline {
-        background-color: transparent;
-        color: #004d99;
-        border: 1px solid #004d99;
-        margin-right: 8px;
+    @media (max-width: 480px) {
+        .nav-user {
+            display: none;
+        }
     }
 </style>
