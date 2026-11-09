@@ -1,7 +1,7 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, or_
 
 from .models import Event, EventType, LoginThrottle, Registration, Unit, UnitManager, User
 
@@ -163,9 +163,20 @@ def get_public_event(db, event_id):
     return event
 
 
-def list_events(db, user):
-    events = db.scalars(select(Event).where(Event.is_public.is_(True), Event.is_cancelled.is_(False),
-                                           Event.starts_at > utc_now()).order_by(Event.starts_at, Event.id)).all()
+def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to=None):
+    statement = select(Event).where(Event.is_public.is_(True), Event.is_cancelled.is_(False),
+                                    Event.starts_at > utc_now())
+    if keyword and keyword.strip():
+        term = f"%{keyword.strip()}%"
+        statement = statement.where(or_(Event.name.ilike(term), Event.description.ilike(term)))
+    if event_type:
+        statement = statement.where(Event.category == event_type)
+    if date_from:
+        statement = statement.where(Event.starts_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        # Inclusive date range; use the next midnight as an exclusive bound.
+        statement = statement.where(Event.starts_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+    events = db.scalars(statement.order_by(Event.starts_at, Event.id)).all()
     ids = [event.id for event in events]
     if not ids:
         return []

@@ -4,6 +4,47 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field(min_length=1, max_length=100)
+    identity: Literal["student", "teacher", "staff"]
+    department_id: int = Field(gt=0)
+    grade: int | None = Field(default=None, ge=1, le=8)
+    password: str = Field(min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_profile(self):
+        import re
+        if not re.search(r"[A-Za-z]", self.password) or not re.search(r"\d", self.password):
+            raise ValueError("密碼至少 8 碼，且須同時包含英文字母與數字")
+        if self.identity == "student" and self.grade is None:
+            raise ValueError("學生必須填寫年級")
+        if self.identity != "student" and self.grade is not None:
+            raise ValueError("只有學生需要填寫年級")
+        return self
+
+
+class TokenRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+    password: str = Field(min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_password(self):
+        import re
+        if not re.search(r"[A-Za-z]", self.password) or not re.search(r"\d", self.password):
+            raise ValueError("密碼至少 8 碼，且須同時包含英文字母與數字")
+        return self
+
+
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=1, max_length=256)

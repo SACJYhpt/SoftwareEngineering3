@@ -15,7 +15,11 @@
             </div>
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '登入中…' : '登入' }}</button>
-            <p class="muted note">MVP 尚未開放註冊，請使用系統初始化時建立的帳號。</p>
+            <div class="login-links"><router-link to="/forgot-password">忘記密碼？</router-link></div>
+            <div v-if="verificationNeeded" class="alert alert-info">
+                尚未完成信箱驗證。<button class="text-button" type="button" :disabled="resending" @click="resend">{{ resending ? '寄送中…' : '重新寄送驗證信' }}</button>
+            </div>
+            <p class="muted note">還沒有帳號？<router-link to="/register">立即註冊</router-link></p>
         </form>
     </main>
 </template>
@@ -24,6 +28,7 @@
     import { reactive, ref } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
     import { login } from '../auth'
+    import { request } from '../api'
     import { safeRedirect } from '../format'
 
     const route = useRoute()
@@ -33,11 +38,26 @@
     const errors = reactive({ email: '', password: '' })
     const formError = ref('')
     const submitting = ref(false)
+    const verificationNeeded = ref(false)
+    const resending = ref(false)
+
+    async function resend() {
+        resending.value = true
+        try {
+            const result = await request('/auth/resend-verification', {
+                method: 'POST', body: { email: email.value.trim() }, withAuth: false,
+            })
+            formError.value = result.message
+            verificationNeeded.value = false
+        } catch (e) { formError.value = e.message }
+        finally { resending.value = false }
+    }
 
     async function onSubmit() {
         errors.email = email.value.trim() ? '' : '請輸入信箱'
         errors.password = password.value ? '' : '請輸入密碼'
         formError.value = ''
+        verificationNeeded.value = false
         if (errors.email || errors.password) return
         submitting.value = true
         try {
@@ -46,6 +66,7 @@
             router.replace(safeRedirect(route.query.redirect))
         } catch (e) {
             formError.value = e.message
+            verificationNeeded.value = e.code === 'EMAIL_NOT_VERIFIED'
             password.value = ''
         } finally {
             submitting.value = false
@@ -60,8 +81,7 @@
     h1 {
         margin-top: 0;
     }
-    .note {
-        font-size: 0.9rem;
-        margin: 14px 0 0;
-    }
+    .note { font-size: 0.9rem; margin: 14px 0 0; text-align: center; }
+    .login-links { text-align: right; margin-top: 10px; font-size: .9rem; }
+    .text-button { border: 0; background: none; color: var(--brand); text-decoration: underline; cursor: pointer; }
 </style>

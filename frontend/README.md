@@ -24,3 +24,13 @@ npm run build   # 建置到 dist/
 | `src/views/CreateEvent.vue` | 建立活動 (ER-US-C01、C02、C03、C12) |
 | `src/components/Navbar.vue` | 導覽列、登出 (ER-US-A05) |
 | `src/components/EventCard.vue` | 首頁的活動卡片 |
+
+
+## 本次新增功能
+
+- `/register`：學校信箱註冊、身分別、系所與學生年級欄位。
+- `/verify-email`：透過信件 token 驗證信箱。
+- `/forgot-password`、`/reset-password`：忘記密碼與一次性重設。
+- 首頁：關鍵字搜尋活動名稱／描述，並可組合活動類型與日期篩選。
+- 活動詳情：可複製公開活動連結及顯示海報用活動詳情 QR Code。QR Code 不含登入憑證或個人報到資料。
+- 部署使用 Vue Router history 模式時，網站伺服器必須將 `/events/:id` 等前端路徑 fallback 至 `index.html`，否則直接貼上活動網址或重新整理可能得到伺服器 404。

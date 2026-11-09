@@ -28,6 +28,8 @@
 | `registrations` | 報名紀錄，同一人對同一活動只有一筆 |
 | `revoked_tokens` | 已登出的憑證 (jti)，到期後可清除 |
 | `login_throttles` | 每個信箱連續登入失敗次數與鎖定期限 |
+| `email_verification_tokens` | 信箱驗證 token 雜湊、期限與使用狀態 |
+| `password_reset_tokens` | 密碼重設 token 雜湊、期限與一次性使用狀態 |
 
 目前沒有 migration 工具，`create_all()` 只會建立缺少的資料表，不會修改既有資料表。
 資料表結構變更後，開發環境請執行 `init_data.py --demo --reset` 重建；`init_data.py` 偵測到舊結構時會停止並提示。
@@ -51,12 +53,18 @@
 
 | 方法與路徑 | 登入 | 說明 |
 |---|---|---|
-| `POST /auth/login` | 否 | `{"email","password"}` → `access_token` 與使用者資料 |
+| `POST /auth/register` | 否 | 學校信箱註冊；建立未驗證帳號並寄出 24 小時驗證連結 |
+| `GET /units` | 否 | 註冊用系所清單 (department) |
+| `POST /auth/verify-email` | 否 | `{ "token" }` 完成信箱驗證 |
+| `POST /auth/resend-verification` | 否 | `{ "email" }` 重寄驗證信，同信箱 60 秒冷卻；新連結會撤銷舊連結 |
+| `POST /auth/password-reset/request` | 否 | `{ "email" }` 要求寄送重設連結；不揭露信箱是否存在 |
+| `POST /auth/password-reset/confirm` | 否 | `{ "token","password" }` 一次性重設密碼；連結 1 小時失效，並撤銷所有既有登入 |
+| `POST /auth/login` | 否 | `{ "email","password" }` → `access_token` 與使用者資料；信箱未驗證不可登入 |
 | `POST /auth/logout` | 是 | 撤銷目前的憑證，回 204 |
 | `GET /auth/me` | 是 | 使用者資料、身分別、系所、年級、`managed_units` |
 | `GET /event-types` | 否 | 啟用中的活動類型 |
 | `POST /events` | 是，且須管理指定單位 | 建立活動，回 201 |
-| `GET /events` | 否 | 尚未開始、未取消的公開活動，依開始時間排序 |
+| `GET /events` | 否 | 尚未開始、未取消的公開活動；支援 `q`、`type`、`date_from`、`date_to` 組合篩選 |
 | `GET /events/{id}` | 否 | 活動詳情；帶憑證時多回傳本人的報名狀態 |
 | `POST /events/{id}/registrations` | 是 | 報名；新報名回 201，重複送出回 200 與原紀錄 |
 
@@ -116,3 +124,14 @@ venv\Scripts\python.exe -m pytest -q tests/test_mysql.py
 ```
 
 `compose.yaml` 可啟動本機 MySQL 8.4 (`docker compose --env-file mysql.env up -d`，密碼範本見 `mysql.env.example`)。
+
+
+## 註冊、驗證與郵件設定
+
+- 預設允許網域為 `ntou.edu.tw`、`mail.ntou.edu.tw`；可用 `SCHOOL_EMAIL_DOMAINS` 以逗號分隔調整。請依學校實際核發信箱網域確認後再部署。
+- 註冊必填姓名、身分別、系所、密碼；學生另須填年級。身分別寫入帳號資料，沒有提供自行修改身分別的 API。
+- 密碼至少 8 碼，且包含至少一個英文字母與一個數字。
+- 驗證與重設 token 僅以 SHA-256 雜湊存入資料庫；寄出的原始 token 不回傳 API。驗證 token 24 小時有效；重設 token 1 小時有效且只能使用一次。
+- 設定 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASSWORD`、`SMTP_FROM` 才會透過 SMTP 寄信。未設定 SMTP 時，開發環境會將信件內容放在 `app.state.email_outbox` 並印在後端終端機，方便本機測試；正式環境必須設定郵件服務。
+- 設定 `FRONTEND_URL` 為使用者實際可開啟的前端網址，郵件連結才會正確。
+- 本次新增 `users.email_verified`、`users.verification_sent_at`、`users.token_version` 及兩張 token 資料表。由於專案目前沒有 migration，既有開發資料庫請先備份，再執行 `python init_data.py --demo --reset` 重建；正式資料庫請先用 migration 加欄位與資料表，勿直接 reset。

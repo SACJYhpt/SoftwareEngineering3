@@ -29,6 +29,19 @@
                     <dt>名額</dt>
                     <dd>{{ capacityText(event) }}</dd>
                 </dl>
+                <section class="share-section">
+                    <h2>分享活動</h2>
+                    <p class="muted">此連結與海報 QR Code 僅導向活動詳情，不含登入憑證或個人資料；個人報到 QR Code 為另一種用途。</p>
+                    <div class="share-link">
+                        <input :value="shareUrl" readonly aria-label="活動詳情連結" />
+                        <button class="btn btn-outline" type="button" @click="copyLink">複製連結</button>
+                    </div>
+                    <div class="qr-area">
+                        <img :src="qrImageUrl" alt="活動詳情連結 QR Code" width="180" height="180" />
+                        <span class="muted">海報 QR Code（活動詳情）</span>
+                    </div>
+                    <p v-if="shareMessage" class="muted" role="status">{{ shareMessage }}</p>
+                </section>
                 <h2>活動說明</h2>
                 <p class="prose">{{ event.description }}</p>
                 <template v-if="event.notes">
@@ -67,6 +80,18 @@
     const loadError = ref(null)
     const submitting = ref(false)
     const message = ref(null)
+    const shareMessage = ref('')
+    const shareUrl = computed(() => `${window.location.origin}/events/${route.params.id}`)
+    const qrImageUrl = computed(() => `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareUrl.value)}`)
+
+    async function copyLink() {
+        try {
+            await navigator.clipboard.writeText(shareUrl.value)
+            shareMessage.value = '活動連結已複製'
+        } catch {
+            shareMessage.value = '無法自動複製，請手動複製上方連結'
+        }
+    }
 
     async function load() {
         loadError.value = null
@@ -152,6 +177,7 @@
         .action {
             order: -1;
         }
+        .share-link { flex-direction: column; }
     }
     .badges {
         display: flex;
@@ -180,6 +206,15 @@
         font-size: 1.1rem;
         margin: 20px 0 6px;
     }
+    .share-section {
+        margin-top: 24px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+    }
+    .share-link { display: flex; gap: 8px; }
+    .share-link input { min-width: 0; flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+    .qr-area { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; }
+    .qr-area img { border: 1px solid var(--border); padding: 6px; background: white; }
     .prose {
         white-space: pre-line;
         margin: 0;
