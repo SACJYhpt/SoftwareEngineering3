@@ -124,7 +124,7 @@ venv\Scripts\python.exe -m pytest -q
 
 一般測試使用每次新建的 SQLite 資料庫。MySQL 併發測試需要一個專用的空資料庫 `event_registration_test`：
 
-SRD v2 本次完整結果為 **155 passed, 1 skipped, 1 warning**；外部 SMTP 和正式 MySQL 未驗收，完整界線見 R2 交接。
+SRD v2 R2 原始結果為 **155 passed, 1 skipped, 1 warning**；2026-11-11 整合組員測試後為 **161 passed, 1 skipped, 1 warning**。外部 SMTP 和正式 MySQL 未驗收，完整界線見 R2 交接及 [前後端整合說明](../docs/前後端整合說明.md)。
 
 R2 測試在 `tests/test_my_events.py`，涵蓋本人隔離、截止邊界、重複取消、重新報名、併發，以及團隊登出撤銷對新 API 的保護。
 MySQL 測試另包含取消釋出一席後的併發搶位；未設定 MYSQL_TEST_URL 時仍略過，不能據此宣稱 MySQL 已驗收。

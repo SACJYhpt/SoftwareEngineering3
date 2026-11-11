@@ -1,7 +1,7 @@
 // Login state. sessionStorage (not localStorage) so closing the browser on a
 // shared computer drops the token; logout also revokes it on the server.
 import { computed, reactive } from 'vue'
-import { request } from './api'
+import { request } from './api.js'
 
 const KEY = 'ntou-events-session'
 

@@ -87,6 +87,11 @@
                 </div>
             </fieldset>
 
+            <fieldset v-if="organizerTerms">
+                <legend>主辦規範（第 {{ organizerTerms.version }} 版）</legend>
+                <p class="terms-content">{{ organizerTerms.content }}</p>
+                <label class="terms-consent" for="organizer-consent"><input id="organizer-consent" v-model="termsAccepted" type="checkbox" />我已閱讀並確認以上主辦規範</label>
+            </fieldset>
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '建立中…' : '建立並發布活動' }}</button>
         </form>
@@ -104,6 +109,8 @@
     const types = ref([])
     const submitting = ref(false)
     const formError = ref('')
+    const organizerTerms = ref(null)
+    const termsAccepted = ref(false)
     const FIELDS = ['unit_id', 'name', 'type', 'description', 'start_time', 'end_time', 'location',
                     'registration_start', 'registration_deadline', 'capacity', 'contact_information']
     const REQUIRED = FIELDS.filter((field) => field !== 'capacity')
@@ -125,8 +132,8 @@
         const regStart = taipeiInputToDate(form.registration_start)
         const regEnd = taipeiInputToDate(form.registration_deadline)
         if (start && start < new Date()) errors.start_time = '活動開始時間不可早於現在'
-        if (start && end && end <= start) errors.end_time = '結束時間必須晚於開始時間'
-        if (regStart && regEnd && regStart >= regEnd) errors.registration_start = '報名開始必須早於報名截止'
+        if (start && end && end < start) errors.end_time = '結束時間不可早於開始時間'
+        if (regStart && regEnd && regStart > regEnd) errors.registration_start = '報名開始不可晚於報名截止'
         if (regEnd && start && regEnd > start) errors.registration_deadline = '報名截止不可晚於活動開始'
         if (form.capacity !== '' && form.capacity !== null && !/^[1-9]\d*$/.test(String(form.capacity))) {
             errors.capacity = '名額須為正整數，或留空表示不限'
@@ -144,8 +151,19 @@
             formError.value = '請修正標示的欄位後再送出'
             return
         }
+        if (organizerTerms.value && !termsAccepted.value) {
+            formError.value = '請先閱讀並確認目前版本的主辦規範'
+            return
+        }
         submitting.value = true
         try {
+            if (organizerTerms.value) {
+                await request('/organizer-terms/acknowledgements', {
+                    method: 'POST', body: { document_id: organizerTerms.value.id },
+                })
+                organizerTerms.value = null
+                termsAccepted.value = false
+            }
             const payload = {
                 unit_id: Number(form.unit_id),
                 name: form.name, type: form.type, description: form.description,
@@ -162,6 +180,11 @@
             Object.assign(errors, e.fieldErrors || {})
             if (CODE_FIELDS[e.code]) errors[CODE_FIELDS[e.code]] = e.message
             formError.value = e.message
+            if (e.code === 'ORGANIZER_TERMS_REQUIRED' || e.code === 'DOCUMENT_OUTDATED') {
+                termsAccepted.value = false
+                try { organizerTerms.value = await request('/organizer-terms', { withAuth: false }) }
+                catch (loadError) { formError.value = loadError.message }
+            }
         } finally {
             submitting.value = false
         }
@@ -200,4 +223,6 @@
         grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
         gap: 0 16px;
     }
+    .terms-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .terms-consent { display: flex; align-items: flex-start; gap: 8px; }
 </style>

@@ -1,8 +1,8 @@
 // Thin wrapper around fetch for the FastAPI backend.
 // Business errors arrive as {detail: {code, message}}; validation errors as {detail: [{loc, msg}]}.
-import { auth, clearSession } from './auth'
+import { auth, clearSession } from './auth.js'
 
-const BASE = import.meta.env.VITE_API_BASE || '/api'
+const BASE = import.meta.env?.VITE_API_BASE || '/api'
 
 export class ApiError extends Error {
   constructor(status, code, message, fieldErrors = {}) {
@@ -15,8 +15,10 @@ export class ApiError extends Error {
 
 // English validator messages from the backend, shown in Chinese.
 const VALIDATION_MESSAGES = [
-  ['end_time must be later than start_time', 'end_time', '結束時間必須晚於開始時間'],
-  ['registration_start must be earlier than registration_deadline', 'registration_start', '報名開始必須早於報名截止'],
+  ['end_time must be later than start_time', 'end_time', '結束時間不可早於開始時間'],
+  ['end_time must not be earlier than start_time', 'end_time', '結束時間不可早於開始時間'],
+  ['registration_start must be earlier than registration_deadline', 'registration_start', '報名開始不可晚於報名截止'],
+  ['registration_start must not be later than registration_deadline', 'registration_start', '報名開始不可晚於報名截止'],
   ['registration_deadline must not be later than start_time', 'registration_deadline', '報名截止不可晚於活動開始'],
 ]
 
@@ -37,7 +39,7 @@ function toApiError(status, body) {
   return new ApiError(status, 'HTTP_' + status, status >= 500 ? '伺服器發生錯誤，請稍後再試' : '發生錯誤')
 }
 
-export async function request(path, { method = 'GET', body, withAuth = true } = {}) {
+export async function request(path, { method = 'GET', body, withAuth = true, responseType = 'json' } = {}) {
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (withAuth && auth.token) headers.Authorization = 'Bearer ' + auth.token
@@ -47,13 +49,15 @@ export async function request(path, { method = 'GET', body, withAuth = true } = 
   } catch {
     throw new ApiError(0, 'NETWORK_ERROR', '無法連線到伺服器，請確認網路或後端是否啟動')
   }
-  const data = response.status === 204 ? null : await response.json().catch(() => null)
+  const data = response.status === 204 ? null : response.ok && responseType === 'blob'
+    ? await response.blob() : await response.json().catch(() => null)
   if (response.ok) return data
   const error = toApiError(response.status, data)
   if (error.code === 'INVALID_TOKEN') {
     clearSession()
     // Public pages stay readable after the session expires: retry once as a guest.
-    if (method === 'GET' && withAuth) return request(path, { method, body, withAuth: false })
+    const publicPath = /^\/(events(?:\/[0-9]+)?|event-types|departments|faq|privacy-notice|organizer-terms)(?:\?|$)/.test(path)
+    if (method === 'GET' && withAuth && publicPath) return request(path, { method, body, withAuth: false, responseType })
   }
   throw error
 }

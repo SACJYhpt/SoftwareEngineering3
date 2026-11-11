@@ -7,7 +7,10 @@
                 <span class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</span>
                 <button class="btn btn-outline" :disabled="busy" @click="onLogout">登出</button>
             </template>
-            <router-link v-else :to="{ path: '/login', query: { redirect: loginRedirect } }" class="btn">登入</router-link>
+            <template v-else>
+                <router-link to="/register" class="btn btn-outline">註冊</router-link>
+                <router-link :to="{ path: '/login', query: { redirect: loginRedirect } }" class="btn">登入</router-link>
+            </template>
         </div>
     </nav>
 </template>

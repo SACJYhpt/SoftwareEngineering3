@@ -1,0 +1,9 @@
+<template><main class="page narrow"><form class="panel" @submit.prevent="submit"><h1>重設密碼</h1><div class="field"><label class="required" for="password">新密碼</label><input id="password" v-model="password" type="password" minlength="8" required autocomplete="new-password"/><span class="hint">至少 8 碼，且同時包含英文字母與數字。</span></div><div class="field"><label class="required" for="confirm">確認新密碼</label><input id="confirm" v-model="confirm" type="password" required autocomplete="new-password"/></div><p v-if="message" :class="['alert',ok?'alert-ok':'alert-error']">{{message}}</p><button class="btn btn-large" :disabled="busy||ok">{{busy?'處理中…':'確認重設密碼'}}</button><p v-if="ok" class="note"><router-link to="/login">前往登入</router-link></p></form></main></template>
+<script setup>
+import{onMounted,ref}from'vue';import{useRoute,useRouter}from'vue-router';import{request}from'../api'
+import { actionToken, withoutActionToken } from '../authLink'
+const route=useRoute(),router=useRouter(),token=ref(actionToken(route)),password=ref(''),confirm=ref(''),message=ref(''),busy=ref(false),ok=ref(false)
+onMounted(async()=>{await router.replace(withoutActionToken(route));if(!token.value)message.value='重設連結缺少 token，請重新申請重設密碼'})
+async function submit(){message.value='';if(!token.value){message.value='請從信件開啟完整重設連結';return}if(password.value.length<8||!/[A-Za-z]/.test(password.value)||!/[0-9]/.test(password.value)){message.value='密碼至少 8 碼，且須同時包含英文字母與數字';return}if(password.value!==confirm.value){message.value='兩次輸入的密碼不一致';return}busy.value=true;try{const r=await request('/auth/reset-password',{method:'POST',body:{token:token.value,password:password.value},withAuth:false});message.value=r.message;ok.value=true;token.value=''}catch(e){message.value=e.message}finally{busy.value=false}}
+</script>
+<style scoped>.narrow{max-width:480px}h1{margin-top:0}.note{text-align:center}</style>
