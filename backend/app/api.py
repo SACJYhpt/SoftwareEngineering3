@@ -6,6 +6,7 @@ from io import BytesIO
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
@@ -15,7 +16,7 @@ from .database import Base, build_database, schema_is_current
 from .models import BackupRecord, EmailAttempt, Event, EventType, OutgoingEmail, RevokedToken, Unit, User
 from .schemas import (AcknowledgeRequest, CancelEventRequest, DocumentRequest, EmailRequest, EventTypeRequest,
                       EventUpdate, ResetPasswordRequest, SignupRequest, TokenRequest, UnitRequest)
-from .schemas import (CancellationResponse, EventCreate, EventResponse, EventTypeResponse, LoginRequest,
+from .schemas import (CancellationResponse, EventCreate, EventResponse, EventSummary, EventTypeResponse, LoginRequest,
                       MyEventResponse, RegistrationResponse, TokenResponse, UserResponse)
 from .security import decode_token, dummy_hash, issue_token, verify_password
 from .services import (cancel_registration, create_event, event_view, get_public_event, list_events,
@@ -80,9 +81,10 @@ def create_app(settings=None):
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessions = sessions
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins),
                        allow_credentials=False, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-                       allow_headers=["Authorization", "Content-Type"])
+                       allow_headers=["Authorization", "Content-Type"], expose_headers=["X-Total-Count"])
 
     @app.middleware("http")
     async def private_response_headers(request, call_next):
@@ -147,15 +149,19 @@ def create_app(settings=None):
     def create(payload: EventCreate, db=Depends(get_db), user=Depends(required_user)):
         return event_view(db, create_event(db, payload, user.id), user)
 
-    @app.get("/events", response_model=list[EventResponse], tags=["活動"])
-    def events(q: str | None = Query(default=None, max_length=200), type: str | None = Query(default=None, max_length=100),
+    @app.get("/events", response_model=list[EventSummary], tags=["活動"])
+    def events(response: Response, q: str | None = Query(default=None, max_length=200),
+               type: str | None = Query(default=None, max_length=100),
                date_from: date | None = None, date_to: date | None = None,
+               limit: int = Query(default=30, ge=1, le=100), offset: int = Query(default=0, ge=0),
                db=Depends(get_db), user=Depends(optional_user)):
         if date_from and date_to and date_from > date_to:
             raise HTTPException(422, {"code": "DATE_RANGE_INVALID", "message": "開始日期不得晚於結束日期"})
         if date_to == date.max:
             raise HTTPException(422, {"code": "DATE_RANGE_INVALID", "message": "結束日期超出範圍"})
-        result = list_events(db, user, q.strip() if q else None, type, date_from, date_to)
+        # Paged, card-sized items keep the home page fast with many events (NFR-01-02).
+        result, total = list_events(db, user, q.strip() if q else None, type, date_from, date_to, limit, offset)
+        response.headers["X-Total-Count"] = str(total)
         # All fields are plain response data now. Release the read connection
         # before serializing large lists instead of holding the pool slot.
         db.close()

@@ -57,10 +57,10 @@ class EventCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
-        if self.end_time < self.start_time:
-            raise ValueError("end_time must not be earlier than start_time")
-        if self.registration_start > self.registration_deadline:
-            raise ValueError("registration_start must not be later than registration_deadline")
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time")
+        if self.registration_start >= self.registration_deadline:
+            raise ValueError("registration_start must be earlier than registration_deadline")
         if self.registration_deadline > self.start_time:
             raise ValueError("registration_deadline must not be later than start_time")
         return self
@@ -94,6 +94,21 @@ class EventResponse(BaseModel):
     my_registration_status: str | None
     can_register: bool
     cancellation_reason: str | None = None
+
+
+class EventSummary(BaseModel):
+    """Home-page list item: only what a card shows, to keep GET /events small (NFR-01-02)."""
+    id: int
+    name: str
+    type: str
+    unit: UnitResponse
+    location: str
+    start_time: datetime
+    end_time: datetime
+    registration_count: int
+    capacity: int | None
+    status: Literal["報名未開始", "開放中", "已額滿", "已截止", "進行中", "已結束", "已取消"]
+    my_registration_status: str | None
 
 
 class MyEventResponse(EventResponse):

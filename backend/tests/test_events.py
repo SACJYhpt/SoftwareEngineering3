@@ -128,14 +128,15 @@ def test_valid_capacity(client, manager_headers, event_payload, capacity):
 
 @pytest.mark.parametrize("field,reference", [("end_time", "start_time"), ("registration_start", "registration_deadline")])
 @pytest.mark.parametrize("offset", [0, -1])
-def test_srd_v2_time_order(application, client, manager_headers, event_payload, field, reference, offset):
+def test_strict_time_order(application, client, manager_headers, event_payload, field, reference, offset):
     event_payload[field] = (datetime.fromisoformat(event_payload[reference]) + timedelta(seconds=offset)).isoformat()
     # Registration start must be earlier; invert the negative offset to test a reversed interval.
     if field == "registration_start" and offset:
         event_payload[field] = (datetime.fromisoformat(event_payload[reference]) + timedelta(seconds=1)).isoformat()
-    # SRD v2 C03 says not earlier/not later: equality is valid.
-    assert client.post("/events", json=event_payload, headers=manager_headers).status_code == (201 if offset == 0 else 422)
-    assert event_count(application) == (1 if offset == 0 else 0)
+    # SRD C03: the event must last some time and the registration period must have length,
+    # so equal times are rejected as well as reversed ones.
+    assert client.post("/events", json=event_payload, headers=manager_headers).status_code == 422
+    assert event_count(application) == 0
 
 
 def test_registration_deadline_cannot_follow_start(application, client, manager_headers, event_payload):

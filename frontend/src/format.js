@@ -27,6 +27,24 @@ export function taipeiInputToDate(value) {
   return value ? new Date(taipeiInputToIso(value)) : null
 }
 
+// API timestamp -> value for <input type="datetime-local"> in Taiwan time ("2030-01-12T10:00").
+export function isoToTaipeiInput(iso) {
+  if (!iso) return ''
+  const shifted = new Date(new Date(iso).getTime() + 8 * 3600 * 1000)
+  return shifted.toISOString().slice(0, 16)
+}
+
+export const IDENTITY_LABELS = { student: '學生', teacher: '教師', staff: '行政人員' }
+export const ROLE_LABELS = { member: '一般使用者', manager: '活動管理者', admin: '系統管理員' }
+export const UNIT_KIND_LABELS = { department: '系所', office: '行政單位', club: '社團' }
+
+// Token links arrive as /verify-email#token=...; read once, then drop it from the address bar.
+export function takeTokenFromHash() {
+  const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || ''
+  if (token) history.replaceState(history.state, '', window.location.pathname)
+  return token
+}
+
 export function capacityText(event) {
   return event.capacity == null ? `${event.registration_count} / 不限` : `${event.registration_count} / ${event.capacity}`
 }

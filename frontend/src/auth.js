@@ -35,6 +35,7 @@ export function clearSession() {
 
 export const isLoggedIn = computed(() => Boolean(auth.token))
 export const managedUnits = computed(() => (auth.user && auth.user.managed_units) || [])
+export const isAdmin = computed(() => Boolean(auth.user && auth.user.role === 'admin'))
 
 export async function login(email, password) {
   const result = await request('/auth/login', { method: 'POST', body: { email, password }, withAuth: false })

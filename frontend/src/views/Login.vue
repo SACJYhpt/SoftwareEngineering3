@@ -14,8 +14,14 @@
                 <span v-if="errors.password" class="error">{{ errors.password }}</span>
             </div>
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
+            <!-- 帳密正確但尚未驗證信箱 (ER-US-A01、A03) -->
+            <ResendVerification v-if="needsVerification" :email="email.trim()" />
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '登入中…' : '登入' }}</button>
-            <p class="muted note">MVP 尚未開放註冊，請使用系統初始化時建立的帳號。</p>
+            <p class="links">
+                <router-link to="/forgot-password">忘記密碼？</router-link>
+                <router-link to="/register">還沒有帳號？立即註冊</router-link>
+                <router-link to="/faq">常見問題</router-link>
+            </p>
         </form>
     </main>
 </template>
@@ -25,6 +31,7 @@
     import { useRoute, useRouter } from 'vue-router'
     import { login } from '../auth'
     import { safeRedirect } from '../format'
+    import ResendVerification from '../components/ResendVerification.vue'
 
     const route = useRoute()
     const router = useRouter()
@@ -33,11 +40,13 @@
     const errors = reactive({ email: '', password: '' })
     const formError = ref('')
     const submitting = ref(false)
+    const needsVerification = ref(false)
 
     async function onSubmit() {
         errors.email = email.value.trim() ? '' : '請輸入信箱'
         errors.password = password.value ? '' : '請輸入密碼'
         formError.value = ''
+        needsVerification.value = false
         if (errors.email || errors.password) return
         submitting.value = true
         try {
@@ -46,6 +55,7 @@
             router.replace(safeRedirect(route.query.redirect))
         } catch (e) {
             formError.value = e.message
+            needsVerification.value = e.code === 'EMAIL_NOT_VERIFIED'
             password.value = ''
         } finally {
             submitting.value = false
@@ -60,8 +70,12 @@
     h1 {
         margin-top: 0;
     }
-    .note {
-        font-size: 0.9rem;
-        margin: 14px 0 0;
+    .links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px 16px;
+        margin: 16px 0 0;
+        font-size: 0.92rem;
     }
 </style>

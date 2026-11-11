@@ -178,8 +178,8 @@ CREATE TABLE events (
 	cancellation_reason TEXT, 
 	PRIMARY KEY (id), 
 	CONSTRAINT ck_event_capacity CHECK (capacity IS NULL OR capacity > 0), 
-	CONSTRAINT ck_event_time CHECK (ends_at >= starts_at), 
-	CONSTRAINT ck_registration_time CHECK (registration_opens_at <= registration_closes_at), 
+	CONSTRAINT ck_event_time CHECK (ends_at > starts_at), 
+	CONSTRAINT ck_registration_time CHECK (registration_opens_at < registration_closes_at), 
 	CONSTRAINT ck_registration_before_event CHECK (registration_closes_at <= starts_at), 
 	FOREIGN KEY(unit_id) REFERENCES units (id), 
 	FOREIGN KEY(owner_id) REFERENCES users (id)

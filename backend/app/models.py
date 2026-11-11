@@ -88,8 +88,8 @@ class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
         CheckConstraint("capacity IS NULL OR capacity > 0", name="ck_event_capacity"),
-        CheckConstraint("ends_at >= starts_at", name="ck_event_time"),
-        CheckConstraint("registration_opens_at <= registration_closes_at", name="ck_registration_time"),
+        CheckConstraint("ends_at > starts_at", name="ck_event_time"),
+        CheckConstraint("registration_opens_at < registration_closes_at", name="ck_registration_time"),
         CheckConstraint("registration_closes_at <= starts_at", name="ck_registration_before_event"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )

@@ -157,7 +157,7 @@ def test_listing_visibility_order_and_utc(application, client):
               registration_opens_at=now - timedelta(days=3), registration_closes_at=now - timedelta(days=2))
     response = client.get("/events")
     assert [item["id"] for item in response.json()] == [first, second]
-    assert response.json()[0]["starts_at"].endswith("Z")
+    assert response.json()[0]["start_time"].endswith("Z")
 
 
 def test_parallel_repeated_requests_create_one_record(application):

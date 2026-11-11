@@ -288,7 +288,7 @@ def test_user_search_pagination_filters_and_no_private_secrets(application,clien
     assert client.get('/admin/users',headers=manager).status_code==403
     data=client.get('/admin/users',params={'q':'同名','page_size':1},headers=admin).json()
     assert data['total']==2 and len(data['items'])==1
-    assert set(data['items'][0])=={'id','name','email','identity','department','role'}
+    assert set(data['items'][0])=={'id','name','email','identity','department','role','managed_units'}
     second=client.get('/admin/users',params={'q':'同名','page_size':1,'page':2},headers=admin).json()
     assert data['items'][0]['email']!=second['items'][0]['email']
     filtered=client.get('/admin/users',params={'unit_id':2,'role':'manager'},headers=admin).json()

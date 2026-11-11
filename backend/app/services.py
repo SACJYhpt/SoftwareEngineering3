@@ -182,7 +182,8 @@ def get_public_event(db, event_id):
     return event
 
 
-def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to=None):
+def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to=None, limit=30, offset=0):
+    """One page of matching upcoming events and the total match count (NFR-01-02)."""
     now = utc_now()
     query = select(Event).where(Event.is_public.is_(True), Event.is_cancelled.is_(False), Event.starts_at > now)
     if keyword:
@@ -194,10 +195,11 @@ def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to
         query = query.where(Event.starts_at >= datetime.combine(date_from, datetime.min.time(), taiwan).astimezone(timezone.utc).replace(tzinfo=None))
     if date_to:
         query = query.where(Event.starts_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time(), taiwan).astimezone(timezone.utc).replace(tzinfo=None))
-    events = db.scalars(query.order_by(Event.starts_at, Event.id)).all()
+    total = db.scalar(select(func.count()).select_from(query.subquery()))
+    events = db.scalars(query.order_by(Event.starts_at, Event.id).limit(limit).offset(offset)).all()
     ids = [event.id for event in events]
     if not ids:
-        return []
+        return [], total
     counts = dict(db.execute(select(Registration.event_id, func.count(Registration.id))
                              .where(Registration.event_id.in_(ids), Registration.status == "registered").group_by(Registration.event_id)).all())
     mine = {}
@@ -207,7 +209,7 @@ def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to
     units = {unit.id: unit for unit in db.scalars(select(Unit).where(Unit.id.in_({e.unit_id for e in events})))}
     return [event_view(db, event, user, counts.get(event.id, 0), mine.get(event.id) == "registered", units[event.unit_id],
                        ("已報名" if mine.get(event.id) == "registered" else "已取消" if event.id in mine else "未報名") if user else None, now)
-            for event in events]
+            for event in events], total
 
 
 def list_my_upcoming_events(db, user):
@@ -525,6 +527,16 @@ def notify_event_registrants(db, event, subject, body):
         queue_email(db, email, subject, body)
 
 
+# F02: only these changes notify registrants, labelled as people read them.
+CHANGE_LABELS = {"start_time": "開始時間", "end_time": "結束時間", "location": "地點", "notes": "注意事項"}
+
+
+def change_display(value):
+    if isinstance(value, datetime):
+        return as_utc(value).astimezone(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M")
+    return value or "無"
+
+
 def edit_event(db, event_id, user_id, payload):
     from .schemas import EventCreate
     from pydantic import ValidationError
@@ -540,8 +552,11 @@ def edit_event(db, event_id, user_id, payload):
     values.update(changes)
     try:
         checked = EventCreate.model_validate(values)
-    except ValidationError:
-        fail(422, "EVENT_TIME_INVALID", "活動時間順序不正確")
+    except ValidationError as error:
+        # Only the cross-field time rules raise at model level; anything else is a field format error.
+        if any(not item["loc"] for item in error.errors()):
+            fail(422, "EVENT_TIME_INVALID", "活動時間順序不正確")
+        fail(422, "EVENT_FIELD_INVALID", "欄位格式不正確：" + "、".join(str(item["loc"][-1]) for item in error.errors()))
     if "start_time" in changes and checked.start_time.astimezone(timezone.utc).replace(tzinfo=None) != event.starts_at:
         if checked.start_time.astimezone(timezone.utc).replace(tzinfo=None) < utc_now():
             fail(422, "EVENT_START_IN_PAST", "活動開始時間不得早於現在")
@@ -558,10 +573,8 @@ def edit_event(db, event_id, user_id, payload):
         if isinstance(value, datetime):
             value = value.astimezone(timezone.utc).replace(tzinfo=None)
         before = getattr(event, attr)
-        if before != value and key in {"start_time", "end_time", "location", "notes"}:
-            def display(v):
-                return as_utc(v).astimezone(timezone(timedelta(hours=8))).isoformat() if isinstance(v, datetime) else (v or "無")
-            differences.append(f"{key}：{display(before)} → {display(value)}")
+        if before != value and key in CHANGE_LABELS:
+            differences.append(f"{CHANGE_LABELS[key]}：{change_display(before)} → {change_display(value)}")
         setattr(event, attr, value)
     if differences:
         notify_event_registrants(db, event, f"活動異動：{event.name}", "以下為修改前後差異（台灣時間）：\n" + "\n".join(differences))
@@ -593,11 +606,17 @@ def search_users(db, keyword, unit_id, role, page, page_size):
         query = query.where(User.id.in_(grants) if role == "manager" else or_(User.id.in_(grants), User.department_id == unit_id))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     users = db.scalars(query.order_by(User.id).offset((page - 1) * page_size).limit(page_size)).all()
+    # Current grants per user, so the admin page can show and revoke them (I02, I12).
+    grants = {}
+    for grant_user, unit in db.execute(select(UnitManager.user_id, Unit).join(Unit, Unit.id == UnitManager.unit_id)
+                                       .where(UnitManager.user_id.in_([u.id for u in users])).order_by(Unit.id)):
+        grants.setdefault(grant_user, []).append(dict(id=unit.id, name=unit.name))
     items = []
     for user in users:
         department = db.get(Unit, user.department_id) if user.department_id else None
         items.append(dict(id=user.id, name=user.name, email=user.email, identity=user.identity, role=user.role,
-                          department=dict(id=department.id, name=department.name) if department else None))
+                          department=dict(id=department.id, name=department.name) if department else None,
+                          managed_units=grants.get(user.id, [])))
     return dict(items=items, total=total, page=page, page_size=page_size)
 
 
