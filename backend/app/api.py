@@ -218,6 +218,12 @@ def create_app(settings=None):
         return [dict(id=unit.id, name=unit.name) for unit in db.scalars(
             select(Unit).where(Unit.kind == "department", Unit.is_active.is_(True)).order_by(Unit.name, Unit.id))]
 
+    @app.get("/units", tags=["單位"])
+    def public_units(kind: Literal["department", "office"], db=Depends(get_db)):
+        # Registration options: 系所 for students and teachers, 行政單位 for staff (ER-US-A01).
+        return [dict(id=unit.id, name=unit.name) for unit in db.scalars(
+            select(Unit).where(Unit.kind == kind, Unit.is_active.is_(True)).order_by(Unit.id))]
+
     @app.get("/me/events/history", tags=["個人活動"])
     def history(db=Depends(get_db), user=Depends(required_user)):
         return services.list_my_history(db, user)

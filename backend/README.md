@@ -58,7 +58,8 @@ R2 請優先使用全新測試資料庫；`init_data.py` 與 API 啟動會偵測
 | `GET /auth/me` | 是 | 使用者資料、身分別、系所、年級、`managed_units` |
 | `GET /event-types` | 否 | 啟用中的活動類型 |
 | `POST /events` | 是，且須管理指定單位 | 建立活動，回 201 |
-| `GET /events` | 否 | 尚未開始、未取消的公開活動；支援 `q`、`type`、`date_from`、`date_to` 與分頁 `limit`、`offset`，總數在 `X-Total-Count` |
+| `GET /events` | 否 | 尚未開始、未取消的公開活動；支援 `q` (比對名稱、描述、地點、類型與主辦單位，主辦單位可用簡稱；空白分隔的關鍵字須全部符合)、`type`、`date_from`、`date_to` 與分頁 `limit`、`offset`，總數在 `X-Total-Count` |
+| `GET /units?kind=department\|office` | 否 | 註冊用的系所或行政單位清單 |
 | `GET /events/{id}` | 否 | 活動詳情；帶憑證時多回傳本人的報名狀態 |
 | `POST /events/{id}/registrations` | 是 | 報名；新報名回 201，重複送出回 200 與原紀錄 |
 | `GET /me/events` | 是 | 本人正式報名、尚未結束且未取消的活動 |

@@ -30,11 +30,12 @@
                 <span class="hint">身分別註冊後無法自行修改，請確認選擇正確；如需更正請聯絡系統管理員。</span>
                 <span v-if="errors.identity" class="error">{{ errors.identity }}</span>
             </div>
+            <!-- 學生與教師選系所；行政人員選行政單位 -->
             <div :class="['field', { invalid: errors.department_id }]">
-                <label for="department" class="required">系所</label>
-                <select id="department" v-model="form.department_id">
-                    <option disabled value="">請選擇</option>
-                    <option v-for="unit in departments" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
+                <label for="department" class="required">{{ unitLabel }}</label>
+                <select id="department" v-model="form.department_id" :disabled="!form.identity">
+                    <option disabled value="">{{ form.identity ? '請選擇' : '請先選擇身分別' }}</option>
+                    <option v-for="unit in units" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
                 </select>
                 <span v-if="errors.department_id" class="error">{{ errors.department_id }}</span>
             </div>
@@ -78,7 +79,7 @@
 </template>
 
 <script setup>
-    import { onMounted, reactive, ref, watch } from 'vue'
+    import { computed, onMounted, reactive, ref, watch } from 'vue'
     import { request } from '../api'
     import { IDENTITY_LABELS } from '../format'
     import ResendVerification from '../components/ResendVerification.vue'
@@ -90,15 +91,32 @@
     const form = reactive({ email: '', name: '', identity: '', department_id: '', grade: '', password: '', consent: false })
     const confirm = ref('')
     const errors = reactive(Object.fromEntries(FIELDS.map((field) => [field, ''])))
-    const departments = ref([])
+    const units = ref([])
     const notice = ref(null)
     const noticeError = ref('')
     const formError = ref('')
     const submitting = ref(false)
     const registeredEmail = ref('')
 
-    watch(() => form.identity, (identity) => {
+    // Students and teachers belong to a 系所; administrative staff to a 行政單位.
+    const unitKind = computed(() => (form.identity === 'staff' ? 'office' : 'department'))
+    const unitLabel = computed(() => (unitKind.value === 'office' ? '行政單位' : '系所'))
+
+    async function loadUnits() {
+        try {
+            units.value = await request(`/units?kind=${unitKind.value}`, { withAuth: false })
+        } catch (e) {
+            formError.value = `無法載入${unitLabel.value}清單：` + e.message
+        }
+    }
+
+    watch(() => form.identity, (identity, previous) => {
         if (identity !== 'student') form.grade = ''
+        // Switching between staff and the other identities changes the list, so the choice is cleared.
+        if ((identity === 'staff') !== (previous === 'staff')) {
+            form.department_id = ''
+            loadUnits()
+        }
     })
 
     function validate() {
@@ -106,7 +124,7 @@
         if (!form.email) errors.email = '請輸入學校信箱'
         if (!form.name) errors.name = '請輸入姓名'
         if (!form.identity) errors.identity = '請選擇身分別'
-        if (!form.department_id) errors.department_id = '請選擇系所'
+        if (!form.department_id) errors.department_id = `請選擇${unitLabel.value}`
         if (form.identity === 'student' && !form.grade) errors.grade = '學生須選擇年級'
         if (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/[0-9]/.test(form.password)) {
             errors.password = '密碼至少 8 碼，且須同時包含英文字母與數字'
@@ -162,13 +180,9 @@
         }
     }
 
-    onMounted(async () => {
+    onMounted(() => {
         loadNotice()
-        try {
-            departments.value = await request('/departments', { withAuth: false })
-        } catch (e) {
-            formError.value = '無法載入系所清單：' + e.message
-        }
+        loadUnits()
     })
 </script>
 

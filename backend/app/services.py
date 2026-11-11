@@ -182,12 +182,32 @@ def get_public_event(db, event_id):
     return event
 
 
+def escape_like(text_value):
+    return text_value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def keyword_conditions(keyword):
+    """B04: every space-separated term must match the event's name, description, location
+    or type, or its organizer. Organizer names also match abbreviations whose characters
+    appear in order, so 「資工」 finds 資訊工程學系 and 「航管」 finds 航運管理學系."""
+    conditions = []
+    for term in keyword.split():
+        in_order = "%" + "%".join(escape_like(char) for char in term) + "%"
+        organizer = select(Unit.id).where(Unit.name.like(in_order, escape="\\"))
+        conditions.append(or_(Event.name.icontains(term, autoescape=True),
+                              Event.description.icontains(term, autoescape=True),
+                              Event.location.icontains(term, autoescape=True),
+                              Event.category.icontains(term, autoescape=True),
+                              Event.unit_id.in_(organizer)))
+    return conditions
+
+
 def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to=None, limit=30, offset=0):
     """One page of matching upcoming events and the total match count (NFR-01-02)."""
     now = utc_now()
     query = select(Event).where(Event.is_public.is_(True), Event.is_cancelled.is_(False), Event.starts_at > now)
     if keyword:
-        query = query.where(or_(Event.name.icontains(keyword, autoescape=True), Event.description.icontains(keyword, autoescape=True)))
+        query = query.where(*keyword_conditions(keyword))
     if event_type:
         query = query.where(Event.category == event_type)
     taiwan = timezone(timedelta(hours=8))
@@ -392,6 +412,11 @@ def new_account_token(db, user, purpose, settings):
                 f"有效期限：{as_utc(expires).astimezone(timezone(timedelta(hours=8))).isoformat()}（台灣時間）")
 
 
+def home_unit_kind(identity):
+    """Unit kind a user of this identity belongs to (ER-US-A01)."""
+    return "office" if identity == "staff" else "department"
+
+
 def signup(db, payload, settings):
     from .security import hash_password
     if db.bind.dialect.name == "sqlite":
@@ -404,9 +429,11 @@ def signup(db, payload, settings):
     privacy = current_document(db, "privacy")
     if privacy.version != payload.privacy_version:
         fail(409, "PRIVACY_NOTICE_OUTDATED", "個資告知已更新，請重新確認")
+    # Students and teachers belong to an academic unit; administrative staff to an office.
+    expected = home_unit_kind(payload.identity)
     department = db.get(Unit, payload.department_id)
-    if department is None or department.kind != "department" or not department.is_active:
-        fail(422, "DEPARTMENT_INVALID", "請選擇啟用中的系所")
+    if department is None or department.kind != expected or not department.is_active:
+        fail(422, "DEPARTMENT_INVALID", "請選擇啟用中的行政單位" if expected == "office" else "請選擇啟用中的系所")
     if db.scalar(select(User.id).where(User.email == payload.email)) is not None:
         fail(409, "EMAIL_ALREADY_REGISTERED", "此信箱已註冊")
     user = User(email=payload.email, name=payload.name, password_hash=hash_password(payload.password),

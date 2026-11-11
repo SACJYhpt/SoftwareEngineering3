@@ -2,13 +2,13 @@
     <main class="page">
         <header class="hero-banner">
             <h1>探索校園活動，豐富大學生活</h1>
-            <p>搜尋活動名稱或描述，依活動類型與日期縮小範圍</p>
+            <p>搜尋活動或主辦單位，再依活動類型與日期縮小範圍</p>
         </header>
 
         <!-- 關鍵字、類型、日期可組合使用 (ER-US-B04、B05) -->
         <form class="panel filters" aria-label="活動搜尋與篩選" @submit.prevent="search">
             <div class="search-row">
-                <input v-model.trim="filters.q" type="search" maxlength="200" placeholder="輸入活動名稱或描述的關鍵字…" aria-label="關鍵字" />
+                <input v-model.trim="filters.q" type="search" maxlength="200" placeholder="活動名稱、描述、地點、類型或主辦單位，可用簡稱 (如「資工」)" aria-label="關鍵字" />
                 <button class="btn" type="submit">搜尋</button>
             </div>
             <div class="filter-row">

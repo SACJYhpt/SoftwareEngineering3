@@ -24,36 +24,39 @@
         </form>
 
         <p v-if="message" :class="['alert', message.ok ? 'alert-ok' : 'alert-error']" role="status">{{ message.text }}</p>
-        <p v-if="loading" class="muted">載入中…</p>
+        <!-- The table stays on screen while it refreshes after a change, so the page does not jump. -->
+        <p v-if="loading && !loaded" class="muted">載入中…</p>
         <p v-else-if="error" class="alert alert-error">{{ error }}</p>
         <template v-else>
             <p class="muted">共 {{ result.total }} 位使用者</p>
-            <div class="table-wrap">
-                <table class="table">
+            <div :class="['table-wrap', { refreshing: loading }]">
+                <table class="table users">
                     <thead>
-                        <tr><th>姓名</th><th>Email</th><th>身分別</th><th>系所</th><th>角色</th><th>管理的單位 (ER-US-I02)</th></tr>
+                        <tr><th>姓名</th><th>Email</th><th>身分別</th><th>系所／單位</th><th>角色</th><th class="units-col">管理的單位 (ER-US-I02)</th></tr>
                     </thead>
                     <tbody>
                         <tr v-for="user in result.items" :key="user.id">
                             <td>{{ user.name }}</td>
-                            <td>{{ user.email }}</td>
-                            <td>{{ IDENTITY_LABELS[user.identity] || '—' }}</td>
+                            <td class="email">{{ user.email }}</td>
+                            <td class="nowrap">{{ IDENTITY_LABELS[user.identity] || '—' }}</td>
                             <td>{{ user.department ? user.department.name : '—' }}</td>
-                            <td>{{ ROLE_LABELS[user.role] }}</td>
-                            <td>
+                            <td class="nowrap">{{ ROLE_LABELS[user.role] }}</td>
+                            <td class="units-col">
                                 <span v-if="user.role === 'admin'" class="muted">系統管理員不可透過此處變更</span>
                                 <template v-else>
-                                    <span v-for="unit in user.managed_units" :key="unit.id" class="chip">
-                                        {{ unit.name }}
-                                        <button type="button" :aria-label="`取消 ${unit.name} 的管理資格`" :disabled="busy" @click="revoke(user, unit)">✕</button>
-                                    </span>
-                                    <span class="assign">
+                                    <div v-if="user.managed_units.length" class="chips">
+                                        <span v-for="unit in user.managed_units" :key="unit.id" class="chip">
+                                            {{ unit.name }}
+                                            <button type="button" :aria-label="`取消 ${unit.name} 的管理資格`" :disabled="busy" @click="revoke(user, unit)">✕</button>
+                                        </span>
+                                    </div>
+                                    <div class="assign">
                                         <select v-model="assignChoice[user.id]" :aria-label="`指派 ${user.name} 管理的單位`">
                                             <option value="">指派單位…</option>
                                             <option v-for="unit in assignable(user)" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
                                         </select>
                                         <button class="btn btn-outline btn-small" type="button" :disabled="!assignChoice[user.id] || busy" @click="assign(user)">指派</button>
-                                    </span>
+                                    </div>
                                 </template>
                             </td>
                         </tr>
@@ -80,6 +83,7 @@
     const result = ref({ items: [], total: 0 })
     const page = ref(1)
     const loading = ref(true)
+    const loaded = ref(false)
     const error = ref('')
     const message = ref(null)
     const busy = ref(false)
@@ -102,6 +106,11 @@
             }
             result.value = await request(`/admin/users?${params}`)
             page.value = target
+            loaded.value = true
+            // Every row's selector starts at the placeholder; an unset value would render blank.
+            for (const user of result.value.items) {
+                if (assignChoice[user.id] === undefined) assignChoice[user.id] = ''
+            }
         } catch (e) {
             error.value = e.message
         } finally {
@@ -173,11 +182,29 @@
         background: #fff;
         min-width: 0;
     }
+    .refreshing {
+        opacity: 0.6;
+        transition: opacity 0.15s;
+    }
+    .users .nowrap {
+        white-space: nowrap;
+    }
+    .users .email {
+        overflow-wrap: anywhere;
+    }
+    .users .units-col {
+        min-width: 300px;
+    }
+    .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 6px;
+    }
     .chip {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        margin: 0 6px 6px 0;
         padding: 2px 4px 2px 10px;
         border-radius: 999px;
         background: var(--info-bg);
@@ -191,8 +218,12 @@
         cursor: pointer;
     }
     .assign {
-        display: inline-flex;
+        display: flex;
         gap: 6px;
+    }
+    .assign select {
+        flex: 1;
+        min-width: 0;
     }
     .pager {
         display: flex;

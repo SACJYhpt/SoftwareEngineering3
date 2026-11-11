@@ -14,7 +14,7 @@
             <div v-else class="table-wrap">
                 <table class="table">
                     <thead>
-                        <tr><th>#</th><th>姓名</th><th>Email</th><th>身分別</th><th>系所</th><th>年級</th><th>報名時間</th></tr>
+                        <tr><th>#</th><th>姓名</th><th>Email</th><th>身分別</th><th>系所／單位</th><th>年級</th><th>報名時間</th></tr>
                     </thead>
                     <tbody>
                         <tr v-for="(person, index) in roster.registrations" :key="person.registration_id">
