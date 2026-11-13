@@ -42,6 +42,12 @@ def test_api_is_reachable_under_prefix_with_same_paths_as_dev_proxy(site):
     assert site.get("/api/auth/me").headers.get("cache-control") == "no-store"
 
 
+def test_api_docs_page_loads_its_schema_under_the_prefix(site):
+    page = site.get("/api/docs")
+    assert page.status_code == 200 and "/api/openapi.json" in page.text
+    assert site.get("/api/openapi.json").json()["info"]["title"] == "海大活動報名系統 API"
+
+
 def test_files_outside_dist_are_never_served(site):
     for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/assets/../../secret.txt"]:
         response = site.get(path)

@@ -32,7 +32,10 @@ class FrontendSite:
         path = scope.get("path", "")
         if path == API_PREFIX or path.startswith(API_PREFIX + "/"):
             inner = path[len(API_PREFIX):] or "/"
-            child = dict(scope, path=inner, raw_path=inner.encode())
+            # root_path tells the API it is mounted under /api, so pages it builds itself
+            # (the /api/docs page loading /api/openapi.json) point back under the prefix.
+            child = dict(scope, path=inner, raw_path=inner.encode(),
+                         root_path=scope.get("root_path", "") + API_PREFIX)
             await self.api(child, receive, send)
             return
         if scope["type"] != "http":
