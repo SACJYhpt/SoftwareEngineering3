@@ -108,7 +108,7 @@
         error.value = ''
         moreError.value = ''
         try {
-            const page = await request(query(0), { withTotal: true })
+            const page = await request(query(0), { withTotal: true, guestRetry: true })
             if (current !== searchId) return // a newer search has started
             events.value = page.data
             total.value = page.total
@@ -123,7 +123,7 @@
         loadingMore.value = true
         moreError.value = ''
         try {
-            const page = await request(query(events.value.length), { withTotal: true })
+            const page = await request(query(events.value.length), { withTotal: true, guestRetry: true })
             // Skip events already shown, in case the list shifted between requests.
             const seen = new Set(events.value.map((event) => event.id))
             events.value = events.value.concat(page.data.filter((event) => !seen.has(event.id)))

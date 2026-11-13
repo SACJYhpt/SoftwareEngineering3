@@ -2,7 +2,8 @@
     <main class="page narrow">
         <form class="panel" novalidate @submit.prevent="onSubmit">
             <h1>登入</h1>
-            <p v-if="route.query.redirect && route.query.redirect !== '/'" class="alert alert-info">請先登入，登入後會回到原本的頁面。</p>
+            <p v-if="route.query.expired" class="alert alert-info">登入已失效，請重新登入，登入後會回到原本的頁面。</p>
+            <p v-else-if="route.query.redirect && route.query.redirect !== '/'" class="alert alert-info">請先登入，登入後會回到原本的頁面。</p>
             <div :class="['field', { invalid: errors.email }]">
                 <label for="email" class="required">學校信箱</label>
                 <input id="email" v-model="email" type="email" autocomplete="username" />

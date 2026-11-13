@@ -134,7 +134,7 @@
     async function load() {
         loadError.value = null
         try {
-            event.value = await request(`/events/${route.params.id}`)
+            event.value = await request(`/events/${route.params.id}`, { guestRetry: true })
         } catch (e) {
             loadError.value = e
         } finally {

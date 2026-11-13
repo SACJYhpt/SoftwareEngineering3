@@ -49,8 +49,11 @@ router.beforeEach(async (to) => {
     try {
         // Unit grants can change at any time (ER-US-I02); refresh before guarded pages.
         await refreshUser()
-    } catch {
-        return { path: '/login', query: { redirect: to.fullPath } }
+    } catch (e) {
+        // Tell the login page why: an expired or revoked login, not a first visit.
+        const query = { redirect: to.fullPath }
+        if (e.code === 'INVALID_TOKEN') query.expired = '1'
+        return { path: '/login', query }
     }
     if (requiresManager && managedUnits.value.length === 0) return '/'
     if (requiresAdmin && !isAdmin.value) return '/'

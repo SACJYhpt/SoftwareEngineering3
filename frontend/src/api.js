@@ -55,23 +55,24 @@ async function send(path, { method = 'GET', body, withAuth = true }) {
   }
 }
 
-async function failure(response, path, options) {
+// Throws the API error; an expired or revoked login is cleared first. Returns only when the
+// caller marked the read as public (guestRetry), so it can be repeated as a guest.
+async function failure(response, options) {
   const error = toApiError(response.status, await response.json().catch(() => null))
   if (error.code === 'INVALID_TOKEN') {
     clearSession()
-    // Public pages stay readable after the session expires: retry once as a guest.
-    if ((options.method || 'GET') === 'GET' && options.withAuth !== false) {
-      return { retry: true }
-    }
+    if (options.guestRetry && (options.method || 'GET') === 'GET' && options.withAuth !== false) return
   }
   throw error
 }
 
 // withTotal: resolve to {data, total}, total from the X-Total-Count header of paged lists.
+// guestRetry: a public read (home list, event detail) that should still show as a guest when
+// the login has expired. Private reads are not retried, so the page says 「登入已失效」.
 export async function request(path, options = {}) {
   const response = await send(path, options)
   if (!response.ok) {
-    await failure(response, path, options)
+    await failure(response, options)
     return request(path, { ...options, withAuth: false })
   }
   const data = response.status === 204 ? null : await response.json().catch(() => null)
@@ -81,7 +82,7 @@ export async function request(path, options = {}) {
 // Downloads a file the API returns (e.g. the poster QR PNG) with the login token attached.
 export async function download(path, filename) {
   const response = await send(path, {})
-  if (!response.ok) await failure(response, path, { method: 'POST' })
+  if (!response.ok) await failure(response, {})
   const url = URL.createObjectURL(await response.blob())
   const link = document.createElement('a')
   link.href = url
