@@ -377,3 +377,27 @@ def test_password_reset_token_cannot_be_consumed_twice_concurrently(application,
         return client.post('/auth/reset-password',json=dict(token=token,password='ChangedPassword123')).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(reset,range(2)))==[200,400]
+
+
+def test_cancel_event_records_cancellation_time(application, client, manager, clock):
+    """F07 資料庫：活動保存取消原因與取消時間。"""
+    event_id = add_event(application)
+    with application.state.sessions() as db:
+        assert db.get(Event, event_id).cancelled_at is None
+    client.post(f'/events/{event_id}/cancel', json={'reason': '場地維修'}, headers=manager)
+    with application.state.sessions() as db:
+        event = db.get(Event, event_id)
+        assert (event.cancellation_reason, event.cancelled_at) == ('場地維修', clock['now'])
+
+
+def test_attendance_status_column_defaults_to_unrecorded_and_drives_history(application, client, headers, clock):
+    """H03 資料庫：出席狀態欄位；R2 沒有報到，一律為「未記錄」，報到 (R3) 寫入後歷史顯示對應文字。"""
+    event_id = add_event(application)
+    client.post(f'/events/{event_id}/registrations', headers=headers)
+    with application.state.sessions() as db:
+        assert db.scalar(select(Registration)).attendance_status == 'unrecorded'
+    clock['now'] += timedelta(days=3, hours=1)
+    assert client.get('/me/events/history', headers=headers).json()[0]['attendance_status'] == '未記錄'
+    with application.state.sessions.begin() as db:
+        db.scalar(select(Registration)).attendance_status = 'present'
+    assert client.get('/me/events/history', headers=headers).json()[0]['attendance_status'] == '出席'

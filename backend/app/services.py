@@ -513,7 +513,11 @@ def list_my_history(db, user):
                              Event.ends_at <= utc_now(), Event.is_cancelled.is_(False))
                       .order_by(Event.starts_at.desc(), Event.id.desc())).all()
     return [dict(event_view(db, event, user), registration_id=record.id,
-                 registered_at=as_utc(record.registered_at), attendance_status="未記錄") for event, record in rows]
+                 registered_at=as_utc(record.registered_at),
+                 attendance_status=ATTENDANCE_LABELS.get(record.attendance_status, "未記錄")) for event, record in rows]
+
+
+ATTENDANCE_LABELS = {"unrecorded": "未記錄", "present": "出席", "absent": "缺席", "leave": "請假"}
 
 
 def managed_event(db, event_id, user_id, lock=False):
@@ -615,6 +619,7 @@ def cancel_event(db, event_id, user_id, reason):
         fail(409, "EVENT_NOT_EDITABLE", "已取消或已結束的活動不可取消")
     event.is_cancelled = True
     event.cancellation_reason = reason
+    event.cancelled_at = utc_now()
     notify_event_registrants(db, event, f"活動取消：{event.name}", f"活動已取消。\n取消原因：{reason}")
     db.commit()
     return event_view(db, event, db.get(User, user_id))

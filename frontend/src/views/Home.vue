@@ -55,12 +55,27 @@
 
 <script setup>
     import { computed, onMounted, reactive, ref, watch } from 'vue'
+    import { useRoute, useRouter } from 'vue-router'
     import { request } from '../api'
     import EventCard from '../components/EventCard.vue'
 
     const PAGE_SIZE = 30
     const EMPTY = { q: '', type: '', date_from: '', date_to: '' }
-    const filters = reactive({ ...EMPTY })
+    const route = useRoute()
+    const router = useRouter()
+
+    // The search conditions live in the URL (?q=&type=&date_from=&date_to=), so a refreshed
+    // or shared link shows the same results (ER-US-B05).
+    function filtersFromQuery(query) {
+        const result = { ...EMPTY }
+        for (const key of Object.keys(EMPTY)) {
+            const value = query[key]
+            if (typeof value === 'string') result[key] = key === 'q' ? value.trim().slice(0, 200) : value
+        }
+        return result
+    }
+
+    const filters = reactive(filtersFromQuery(route.query))
     const types = ref([])
     const events = ref([])
     const total = ref(0)
@@ -87,6 +102,7 @@
             loading.value = false
             return
         }
+        syncUrl()
         const current = ++searchId
         loading.value = true
         error.value = ''
@@ -122,6 +138,31 @@
     function clearFilters() {
         Object.assign(filters, EMPTY)
     }
+
+    function sameAsUrl(values) {
+        return Object.keys(EMPTY).every((key) => (route.query[key] || '') === values[key])
+    }
+
+    function syncUrl() {
+        if (sameAsUrl(filters)) return
+        const query = {}
+        for (const [key, value] of Object.entries(filters)) {
+            if (value) query[key] = value
+        }
+        router.replace({ query })
+    }
+
+    // Back / forward between searches restores that search's conditions.
+    watch(() => route.query, (query) => {
+        if (route.path !== '/') return
+        const next = filtersFromQuery(query)
+        if (Object.keys(EMPTY).some((key) => next[key] !== filters[key])) {
+            const keywordChanged = next.q !== filters.q
+            Object.assign(filters, next)
+            // Type, date and cleared-keyword changes trigger their own watchers; a new keyword does not.
+            if (keywordChanged && next.q) search()
+        }
+    })
 
     // Type and dates apply as soon as they change; the keyword applies on 搜尋 / Enter.
     watch(() => [filters.type, filters.date_from, filters.date_to], search)

@@ -10,6 +10,7 @@ import argparse
 import os
 import secrets
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -113,18 +114,15 @@ def ensure_base(db, admin_email, admin_password, development=False):
             print(f"已建立系統管理員 {admin_email}")
 
 
+DOCUMENT_DRAFTS = Path(__file__).resolve().parent / "docs" / "文件初版"
+DOCUMENT_FILES = {"privacy": "個資告知.txt", "organizer": "主辦規範.txt", "faq": "常見問題.txt"}
+
+
 def ensure_documents(db):
-    # Development drafts describe actual R2 behavior; the team must approve and
-    # publish its own privacy notice and organizer terms before a real release.
-    contents = {
-        "privacy": "[開發草案，正式上線前須團隊確認] 蒐集姓名、學校信箱、身分別、系所、學生年級，用於帳號驗證及活動報名。"
-                   "報名資料可由活動所屬單位的所有活動管理者查看。R2 目前保留帳號與報名資料，尚無自動到期刪除；"
-                   "個資保存期限、刪除申請方式及適用法規須由團隊查證後公布，不承諾尚未實作的自動刪除。",
-        "organizer": "[開發草案，正式上線前須團隊確認] 主辦單位應確認活動資訊正確，僅為辦理活動使用報名資料，"
-                     "妥善保護名單；異動與取消須透過系統通知參加者，不得任意散布個人資料。",
-        "faq": "R2：以學校信箱註冊並驗證後登入；可搜尋、篩選活動及報名。截止前可取消並重新報名，截止當下起不可取消。"
-               "密碼忘記可申請重設；活動異動與取消會排入通知佇列。候補、截止後取消申請及報到尚未釋出。",
-    }
+    # First drafts (docs/文件初版) describe actual R2 behavior; the team must approve and
+    # publish its own versions in /admin before a real release.
+    contents = {kind: (DOCUMENT_DRAFTS / name).read_text(encoding="utf-8").strip()
+                for kind, name in DOCUMENT_FILES.items()}
     for kind, content in contents.items():
         if db.scalar(select(PublishedDocument.id).where(PublishedDocument.kind == kind).limit(1)) is None:
             db.add(PublishedDocument(kind=kind, version=1, content=content, published_at=utc_now()))

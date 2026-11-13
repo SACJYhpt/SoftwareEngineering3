@@ -113,6 +113,7 @@ class Event(Base):
     is_public: Mapped[bool] = mapped_column(default=True)
     is_cancelled: Mapped[bool] = mapped_column(default=False)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Registration(Base):
@@ -120,6 +121,8 @@ class Registration(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "event_id", name="uq_registration_user_event"),
         CheckConstraint("status IN ('registered', 'cancelled')", name="ck_registration_status"),
+        CheckConstraint("attendance_status IN ('unrecorded', 'present', 'absent', 'leave')",
+                        name="ck_registration_attendance"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -128,6 +131,9 @@ class Registration(Base):
     registered_at: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(20), default="registered", server_default="registered", index=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # ER-US-H03: R2 has no check-in, so every record stays "unrecorded" (未記錄); check-in (R3)
+    # writes present/absent, and leave (請假) arrives with ER-US-H02.
+    attendance_status: Mapped[str] = mapped_column(String(20), default="unrecorded", server_default="unrecorded")
 
 
 class PublishedDocument(Base):
