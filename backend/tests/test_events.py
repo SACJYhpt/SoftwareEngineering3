@@ -133,6 +133,8 @@ def test_strict_time_order(application, client, manager_headers, event_payload, 
     # Registration start must be earlier; invert the negative offset to test a reversed interval.
     if field == "registration_start" and offset:
         event_payload[field] = (datetime.fromisoformat(event_payload[reference]) + timedelta(seconds=1)).isoformat()
+    # SRD C03: the event must last some time and the registration period must have length,
+    # so equal times are rejected as well as reversed ones.
     assert client.post("/events", json=event_payload, headers=manager_headers).status_code == 422
     assert event_count(application) == 0
 

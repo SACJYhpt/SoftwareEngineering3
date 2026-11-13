@@ -21,12 +21,12 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-def issue_token(user_id: int, settings) -> str:
+def issue_token(user_id: int, settings, token_version: int = 0) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode({"sub": str(user_id), "iat": now,
                        "exp": now + timedelta(minutes=settings.access_token_minutes),
                        "iss": "ntou-events", "aud": "ntou-events-api",
-                       "jti": secrets.token_urlsafe(24)},
+                       "jti": secrets.token_urlsafe(24), "ver": token_version},
                       settings.jwt_secret, algorithm="HS256")
 
 

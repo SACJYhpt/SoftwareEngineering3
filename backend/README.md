@@ -1,6 +1,6 @@
 # 後端 (FastAPI)
 
-安裝、初始化與執行步驟見根目錄的 [README.md](../README.md)。這份文件說明程式結構、權限規則與 API。
+安裝、初始化與執行步驟見根目錄的 [README.md](../README.md)。這份文件說明程式結構、權限規則與 MVP API；最新版 SRD v2 R2 完整契約及資料庫交接見 [R2交接.md](docs/R2交接.md)。
 
 ## 程式結構
 
@@ -15,6 +15,8 @@
 | `app/config.py` | 讀取 `.env`；相對路徑的 SQLite 一律放在 `backend/` 內 |
 | `init_data.py` | 系統初始化 (FR-01-12)：系統管理員、單位、活動類型；`--demo` 另建測試帳號與示範活動 |
 | `tests/` | pytest 自動化測試 |
+| `app/operations.py` | SMTP 佇列、重試、備份及獨立空資料庫還原 |
+| `worker.py` | 常駐寄信與可選的每日備份 worker／明確的還原 CLI |
 
 ## 資料表
 
@@ -30,7 +32,7 @@
 | `login_throttles` | 每個信箱連續登入失敗次數與鎖定期限 |
 
 目前沒有 migration 工具，`create_all()` 只會建立缺少的資料表，不會修改既有資料表。
-資料表結構變更後，開發環境請執行 `init_data.py --demo --reset` 重建；`init_data.py` 偵測到舊結構時會停止並提示。
+R2 請優先使用全新測試資料庫；`init_data.py` 與 API 啟動會偵測舊結構並停止，不自動變更原資料。團隊資料庫升級由資料庫負責人處理，參考 [R2 交接](docs/R2交接.md)。
 
 ## 權限規則
 
@@ -56,9 +58,18 @@
 | `GET /auth/me` | 是 | 使用者資料、身分別、系所、年級、`managed_units` |
 | `GET /event-types` | 否 | 啟用中的活動類型 |
 | `POST /events` | 是，且須管理指定單位 | 建立活動，回 201 |
-| `GET /events` | 否 | 尚未開始、未取消的公開活動，依開始時間排序 |
+| `GET /events` | 否 | 尚未開始、未取消的公開活動；支援 `q` (比對名稱、描述、地點、類型與主辦單位，主辦單位可用簡稱；空白分隔的關鍵字須全部符合)、`type`、`date_from`、`date_to` 與分頁 `limit`、`offset`，總數在 `X-Total-Count` |
+| `GET /units?kind=department\|office` | 否 | 註冊用的系所或行政單位清單 |
 | `GET /events/{id}` | 否 | 活動詳情；帶憑證時多回傳本人的報名狀態 |
 | `POST /events/{id}/registrations` | 是 | 報名；新報名回 201，重複送出回 200 與原紀錄 |
+| `GET /me/events` | 是 | 本人正式報名、尚未結束且未取消的活動 |
+| `DELETE /events/{id}/registrations/me` | 是 | 截止前取消本人的正式報名，回 200 |
+
+### SRD v2 R2
+
+完整功能、所有新路徑、request body、錯誤及前端配合事項見 [R2交接.md](docs/R2交接.md)。
+取消保留 status=cancelled 與 cancelled_at，重新報名重用同筆資料；歷史 API 已提供，R2 出席狀態為「未記錄」。
+註冊／主辦規範須確認當前文件版本；驗證信、重設密碼、活動異動／取消通知寫入 outbox，由 worker 寄送及重試。
 
 ### 建立活動的欄位
 
@@ -66,7 +77,7 @@
 選填：`capacity` (正整數，省略或 null 表示不限)、`notes`。
 
 - 時間必須帶時區 (例如 `2030-01-12T10:00:00+08:00`)；資料庫以 UTC 儲存，回傳時帶 `Z`。
-- 規則：結束晚於開始、報名開始早於報名截止、報名截止不晚於活動開始、活動開始不早於現在。
+- 規則：結束晚於開始、報名開始早於報名截止 (兩者都不可相等)、報名截止不晚於活動開始 (可以相等)、活動開始不早於現在。
 - 不接受未宣告的欄位 (例如 `owner_id`)，建立者一律由登入者決定。
 
 ### 活動狀態
@@ -86,11 +97,14 @@
 | 429 | `LOGIN_LOCKED` | 登入失敗次數過多，`retry_after_minutes` 為剩餘分鐘數 |
 | 403 | `UNIT_FORBIDDEN` | 沒有該單位的管理權限 |
 | 404 | `UNIT_NOT_FOUND`、`EVENT_NOT_FOUND` | 單位或活動不存在 |
+| 404 | `REGISTRATION_NOT_FOUND` | 本人沒有該活動的有效報名，含已取消後重送 |
 | 422 | `EVENT_START_IN_PAST` | 活動開始早於現在 |
 | 422 | `EVENT_TYPE_INVALID` | 活動類型不在清單中或已停用 |
 | 409 | `EVENT_CANCELLED`、`EVENT_STARTED` | 活動已取消、已開始 |
 | 409 | `REGISTRATION_NOT_OPEN`、`REGISTRATION_CLOSED` | 不在報名期間 |
 | 409 | `EVENT_FULL` | 名額已滿 |
+
+取消 API 也使用 EVENT_CANCELLED、EVENT_STARTED、REGISTRATION_CLOSED；任何失敗都不改變有效報名人數。
 
 ### 舊欄位名稱
 
@@ -101,6 +115,7 @@
 
 報名在單一交易中先鎖定活動列，再檢查名額並新增紀錄：MySQL 使用 InnoDB `SELECT ... FOR UPDATE`，SQLite 使用 `BEGIN IMMEDIATE`。
 `(user_id, event_id)` 唯一限制確保同一人不會重複佔用名額。
+取消採用同樣的 event-first 鎖順序，確保釋出的名額不被重複分配。
 
 ## 測試
 
@@ -109,6 +124,11 @@ venv\Scripts\python.exe -m pytest -q
 ```
 
 一般測試使用每次新建的 SQLite 資料庫。MySQL 併發測試需要一個專用的空資料庫 `event_registration_test`：
+
+SRD v2 本次完整結果為 **155 passed, 1 skipped, 1 warning**；外部 SMTP 和正式 MySQL 未驗收，完整界線見 R2 交接。
+
+R2 測試在 `tests/test_my_events.py`，涵蓋本人隔離、截止邊界、重複取消、重新報名、併發，以及團隊登出撤銷對新 API 的保護。
+MySQL 測試另包含取消釋出一席後的併發搶位；未設定 MYSQL_TEST_URL 時仍略過，不能據此宣稱 MySQL 已驗收。
 
 ```powershell
 $env:MYSQL_TEST_URL = "mysql+pymysql://event_app:密碼@127.0.0.1:3306/event_registration_test?charset=utf8mb4"

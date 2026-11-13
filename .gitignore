@@ -4,6 +4,7 @@ backend/.env
 backend/mysql.env
 backend/*.db
 backend/*.db-*
+backend/.backups/
 __pycache__/
 *.pyc
 .pytest_cache/

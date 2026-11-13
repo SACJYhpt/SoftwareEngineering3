@@ -10,21 +10,52 @@ import argparse
 import os
 import secrets
 from datetime import timedelta
+from pathlib import Path
 
-from sqlalchemy import inspect, select
+from sqlalchemy import select
 
 from app.config import Settings
-from app.database import Base, build_database
-from app.models import Event, EventType, Registration, Unit, UnitManager, User
+from app.database import Base, build_database, schema_is_current
+from app.models import (Event, EventType, OrganizerAcknowledgement, PublishedDocument,
+                        Registration, Unit, UnitManager, User)
 from app.security import hash_password
 from app.services import utc_now
 
-UNITS = [
-    ("資訊工程學系", "department"), ("電機工程學系", "department"), ("機械與機電工程學系", "department"),
-    ("航運管理學系", "department"), ("海洋生物研究所", "department"),
-    ("學生事務處課外活動指導組", "office"), ("圖書暨資訊處", "office"),
-    ("吉他社", "club"), ("熱舞社", "club"), ("學生會", "club"),
+# Academic units by college, as listed on https://www.ntou.edu.tw/academics (學術單位一覽表).
+# Registration lists them in this order, so units of one college stay together.
+ACADEMIC_UNITS = [
+    # 海運暨管理學院
+    "商船學系", "航運管理學系", "運輸科學系", "輪機工程學系", "海洋觀光管理學士學位學程",
+    "海洋經營管理學士學位學程", "永續發展碩士在職學位學程",
+    # 生命科學院
+    "食品科學系", "水產養殖學系", "生命科學暨生物科技學系", "海洋生物研究所", "食品安全與風險管理研究所",
+    "海洋生物科技博士學位學程", "海洋生物科技學士學位學程",
+    # 海洋科學與資源學院
+    "環境生物與漁業科學學系", "海洋環境資訊系", "地球科學研究所", "海洋事務與資源管理研究所",
+    "海洋環境與生態研究所", "海洋資源與環境變遷博士學位學程",
+    # 工學院
+    "機械與機電工程學系", "系統工程暨造船學系", "河海工程學系", "海洋工程科技博士學位學程", "海洋工程科技學士學位學程",
+    # 電機資訊學院
+    "電機工程學系", "資訊工程學系", "通訊與導航工程學系", "光電與材料科技學系",
+    # 人文社會科學院
+    "應用經濟研究所", "教育研究所", "海洋文化研究所", "應用英語研究所", "海洋文創設計產業學士學位學程",
+    "師資培育中心", "華語中心",
+    # 海洋法律與政策學院
+    "海洋法律研究所", "海洋法政學士學位學程", "海洋政策碩士學位學程",
+    # 國際學院
+    "海洋生物科技及環境生態永續國際碩士學位學程", "應用人工智慧國際碩士學位學程",
+    # 共同教育中心 (語文、博雅、體育教育組的教師)
+    "共同教育中心",
 ]
+# Administrative units, as listed in the school's 分層負責明細表 (人事室).
+OFFICES = [
+    "教務處", "研究發展處", "學生事務處", "總務處", "圖書暨資訊處", "國際事務處", "秘書室", "人事室",
+    "主計室", "體育室", "職業安全衛生中心", "產學營運總中心", "馬祖行政處", "社會責任實踐與永續發展中心",
+]
+# Clubs are created by the system administrator as needed; these exist for the demo.
+DEMO_CLUBS = ["吉他社", "熱舞社", "學生會"]
+UNITS = ([(name, "department") for name in ACADEMIC_UNITS] + [(name, "office") for name in OFFICES]
+         + [(name, "club") for name in DEMO_CLUBS])
 EVENT_TYPES = ["講座", "工作坊", "參訪", "比賽", "迎新", "社團活動", "志工服務", "其他"]
 DEMO_PASSWORD = "DemoOnly!2026"
 # email, name, role, identity, department, grade, managed units
@@ -37,7 +68,7 @@ DEMO_USERS = [
     ("student3@demo.ntou.edu.tw", "示範學生三", "member", "student", "航運管理學系", 4, []),
     ("grad@demo.ntou.edu.tw", "示範研究生", "member", "student", "海洋生物研究所", 5, []),
     ("teacher@demo.ntou.edu.tw", "示範教師", "member", "teacher", "機械與機電工程學系", None, []),
-    ("staff@demo.ntou.edu.tw", "示範行政人員", "member", "staff", "學生事務處課外活動指導組", None, []),
+    ("staff@demo.ntou.edu.tw", "示範行政人員", "member", "staff", "學生事務處", None, []),
 ]
 # name, unit, capacity, registration opens (days from now), closes (days from now)
 DEMO_EVENTS = [
@@ -51,21 +82,11 @@ DEMO_EVENTS = [
 ]
 
 
-def schema_is_current(engine):
-    """True when every model column exists; create_all() never alters old tables."""
-    inspector = inspect(engine)
-    for table in Base.metadata.sorted_tables:
-        if not inspector.has_table(table.name):
-            continue
-        existing = {column["name"] for column in inspector.get_columns(table.name)}
-        if {column.name for column in table.columns} - existing:
-            return False
-    return True
-
-
-def ensure_units(db):
+def ensure_units(db, demo=False):
     units = {}
     for name, kind in UNITS:
+        if kind == "club" and not demo:
+            continue
         unit = db.scalar(select(Unit).where(Unit.name == name))
         if unit is None:
             unit = Unit(name=name, kind=kind)
@@ -75,8 +96,10 @@ def ensure_units(db):
     return units
 
 
-def ensure_base(db, admin_email, admin_password):
+def ensure_base(db, admin_email, admin_password, development=False):
     ensure_units(db)
+    if development:
+        ensure_documents(db)
     for name in EVENT_TYPES:
         if db.scalar(select(EventType).where(EventType.name == name)) is None:
             db.add(EventType(name=name))
@@ -84,11 +107,26 @@ def ensure_base(db, admin_email, admin_password):
         generated = admin_password is None
         password = admin_password or secrets.token_urlsafe(12)
         db.add(User(email=admin_email, name="系統管理員", role="admin", identity="staff",
-                    password_hash=hash_password(password)))
+                    password_hash=hash_password(password), email_verified=True))
         if generated:
             print(f"已建立系統管理員 {admin_email}，臨時密碼：{password}（只顯示這一次，請妥善保存）")
         else:
             print(f"已建立系統管理員 {admin_email}")
+
+
+DOCUMENT_DRAFTS = Path(__file__).resolve().parent / "docs" / "文件初版"
+DOCUMENT_FILES = {"privacy": "個資告知.txt", "organizer": "主辦規範.txt", "faq": "常見問題.txt"}
+
+
+def ensure_documents(db):
+    # First drafts (docs/文件初版) describe actual R2 behavior; the team must approve and
+    # publish its own versions in /admin before a real release.
+    contents = {kind: (DOCUMENT_DRAFTS / name).read_text(encoding="utf-8").strip()
+                for kind, name in DOCUMENT_FILES.items()}
+    for kind, content in contents.items():
+        if db.scalar(select(PublishedDocument.id).where(PublishedDocument.kind == kind).limit(1)) is None:
+            db.add(PublishedDocument(kind=kind, version=1, content=content, published_at=utc_now()))
+    db.flush()
 
 
 def ensure_demo(db, units):
@@ -98,7 +136,7 @@ def ensure_demo(db, units):
         user = db.scalar(select(User).where(User.email == email))
         if user is None:
             user = User(email=email, name=name, role=role, identity=identity, grade=grade,
-                        department_id=units[department].id, password_hash=hash_password(DEMO_PASSWORD))
+                        department_id=units[department].id, password_hash=hash_password(DEMO_PASSWORD), email_verified=True)
             db.add(user)
             db.flush()
         people[email] = user
@@ -142,8 +180,16 @@ def main(argv=None):
         with sessions.begin() as db:
             if args.demo:
                 # Demo accounts first: the base step then finds the demo admin and creates no second admin.
-                ensure_demo(db, ensure_units(db))
-            ensure_base(db, admin_email, os.getenv("INIT_ADMIN_PASSWORD"))
+                ensure_demo(db, ensure_units(db, demo=True))
+            ensure_base(db, admin_email, os.getenv("INIT_ADMIN_PASSWORD"), settings.app_env == "development")
+            if args.demo:
+                document = db.scalar(select(PublishedDocument).where(PublishedDocument.kind == "organizer")
+                                     .order_by(PublishedDocument.version.desc()).limit(1))
+                # Only simulated demo accounts get seeded acknowledgements.
+                for email, *_ in DEMO_USERS:
+                    user = db.scalar(select(User).where(User.email == email))
+                    if db.get(OrganizerAcknowledgement, (user.id, document.id)) is None:
+                        db.add(OrganizerAcknowledgement(user_id=user.id, document_id=document.id, acknowledged_at=utc_now()))
     finally:
         engine.dispose()
     print("初始化完成。重跑不會刪除或重複建立資料。")

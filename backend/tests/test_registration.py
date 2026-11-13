@@ -157,7 +157,7 @@ def test_listing_visibility_order_and_utc(application, client):
               registration_opens_at=now - timedelta(days=3), registration_closes_at=now - timedelta(days=2))
     response = client.get("/events")
     assert [item["id"] for item in response.json()] == [first, second]
-    assert response.json()[0]["starts_at"].endswith("Z")
+    assert response.json()[0]["start_time"].endswith("Z")
 
 
 def test_parallel_repeated_requests_create_one_record(application):
@@ -172,7 +172,7 @@ def test_1000_attempts_do_not_exceed_100_seats(application):
     event_id = add_event(application, capacity=100)
     with application.state.sessions.begin() as db:
         hashed = db.get(User, 1).password_hash
-        db.add_all([User(id=i, email=f"user{i}@test.invalid", name=f"User {i}", password_hash=hashed)
+        db.add_all([User(id=i, email=f"user{i}@test.invalid", name=f"User {i}", password_hash=hashed, email_verified=True)
                     for i in range(10, 1010)])
 
     def attempt(user_id):
