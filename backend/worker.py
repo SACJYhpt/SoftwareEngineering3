@@ -6,6 +6,7 @@ import time
 from app.config import Settings
 from app.database import build_database
 from app.operations import process_mail, restore_to_empty_database, run_backup, run_daily_backup
+from app.r3 import process_scheduled
 
 
 def main():
@@ -24,11 +25,13 @@ def main():
         print("已還原至指定的獨立空資料庫。")
         return
     engine, sessions = build_database(settings.database_url)
+    sessions.configure(info={"settings":settings})
     try:
         if args.backup_now:
             print(run_backup(sessions, settings))
             return
         while True:
+            process_scheduled(sessions, settings)
             run_daily_backup(sessions, settings)
             process_mail(sessions, settings)
             if args.once:

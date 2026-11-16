@@ -131,7 +131,7 @@ def event_view(db, event, user, count=None, registered=None, unit=None, my_statu
         mine = my_status
     elif user and not registered and find_registration(db, event.id, user.id, False) is not None:
         mine = "已取消"
-    return dict(id=event.id, name=event.name, category=event.category,
+    result = dict(id=event.id, name=event.name, category=event.category,
                 type=event.category, unit_id=event.unit_id, unit=dict(id=unit.id, name=unit.name),
                 contact_information=event.contact_information,
                 start_time=starts_at, end_time=ends_at,
@@ -145,9 +145,14 @@ def event_view(db, event, user, count=None, registered=None, unit=None, my_statu
                 status=status, my_registration_status=mine, cancellation_reason=event.cancellation_reason,
                 # SRD v2: manager/admin retain ordinary registration ability.
                 can_register=user is not None and user.is_active and not registered and status == "開放中")
+    from . import r3
+    result.update(r3.registration_context(db, event, user, status))
+    return result
 
 
 def create_event(db, payload, user_id):
+    from . import r3
+    r3.workflow_lock(db)
     if db.get(Unit, payload.unit_id) is None:
         raise HTTPException(404, {"code": "UNIT_NOT_FOUND", "message": "找不到單位"})
     require_manage_unit(db, user_id, payload.unit_id)
@@ -159,13 +164,17 @@ def create_event(db, payload, user_id):
     start =payload.start_time.astimezone(timezone.utc).replace(tzinfo=None)
     if start < utc_now():
         raise HTTPException(422, {"code": "EVENT_START_IN_PAST", "message": "活動開始時間不得早於現在"})
+    r3.validate_eligibility_settings(db, payload)
+    r3.overlap_warning(db, payload.unit_id, start, payload.end_time.astimezone(timezone.utc).replace(tzinfo=None), payload.confirm_overlap)
     event = Event(unit_id=payload.unit_id, owner_id=user_id, name=payload.name, category=payload.type,
                   description=payload.description, location=payload.location,
                   contact_information=payload.contact_information, notes=payload.notes,
                   starts_at=start, ends_at=payload.end_time.astimezone(timezone.utc).replace(tzinfo=None),
                   registration_opens_at=payload.registration_start.astimezone(timezone.utc).replace(tzinfo=None),
                   registration_closes_at=payload.registration_deadline.astimezone(timezone.utc).replace(tzinfo=None),
-                  capacity=payload.capacity)
+                  capacity=payload.capacity, waitlist_enabled=payload.waitlist_enabled,
+                  waitlist_capacity=payload.waitlist_capacity, eligibility_identities=payload.eligibility_identities,
+                  eligibility_department_ids=payload.eligibility_department_ids, eligibility_grades=payload.eligibility_grades)
     try:
         db.add(event)
         db.commit()
@@ -233,55 +242,29 @@ def list_events(db, user, keyword=None, event_type=None, date_from=None, date_to
 
 
 def list_my_upcoming_events(db, user):
+    from . import r3
     # E01: retain ongoing events until they end, including closed registrations.
     # Ownership of the registration, rather than a managed unit, selects rows.
     now = utc_now()
     rows = db.execute(
         select(Event, Registration)
         .join(Registration, Registration.event_id == Event.id)
-        .where(Registration.user_id == user.id, Registration.status == "registered", Event.ends_at > now,
+        .where(Registration.user_id == user.id, Registration.status.in_(("registered", "waitlisted")), Event.ends_at > now,
                Event.is_cancelled.is_(False))
         .order_by(Event.starts_at, Event.id)
     ).all()
     return [dict(event_view(db, event, user), registration_id=record.id,
                  registered_at=as_utc(record.registered_at),
-                 can_cancel_registration=now < event.registration_closes_at and now < event.starts_at)
+                 can_cancel_registration=r3.can_direct_cancel(db, event, record, now))
             for event, record in rows]
 
 
 def cancel_registration(session_factory, event_id, user_id):
-    """E02: cancel only the caller's active registration before the deadline.
-
-    Use the same event-first lock order as register() so a released seat cannot
-    be allocated twice. Keep the cancelled status required by SRD v2 B03.
-    """
+    from . import r3
     with session_factory() as db:
         try:
-            if db.bind.dialect.name == "sqlite":
-                db.execute(text("BEGIN IMMEDIATE"))
-            event = db.scalar(select(Event).where(Event.id == event_id).with_for_update())
-            if event is None:
-                raise HTTPException(404, {"code": "EVENT_NOT_FOUND", "message": "找不到活動"})
-            user = db.get(User, user_id)
-            if user is None or not user.is_active:
-                raise HTTPException(401, {"code": "AUTH_REQUIRED", "message": "請先登入"})
-            record = find_registration(db, event_id, user_id)
-            if record is None:
-                raise HTTPException(404, {"code": "REGISTRATION_NOT_FOUND", "message": "找不到本人的有效報名"})
-            now = utc_now()  # Check after acquiring the lock, just as register().
-            if event.is_cancelled:
-                raise HTTPException(409, {"code": "EVENT_CANCELLED", "message": "活動已取消"})
-            if now >= event.starts_at:
-                raise HTTPException(409, {"code": "EVENT_STARTED", "message": "活動已開始"})
-            if now >= event.registration_closes_at:
-                raise HTTPException(409, {"code": "REGISTRATION_CLOSED", "message": "報名已截止"})
-            registration_id = record.id
-            record.status = "cancelled"
-            record.cancelled_at = now
-            db.flush()
-            result = dict(message="已取消報名", registration_id=registration_id,
-                          event_id=event.id, status="cancelled",
-                          registration_count=count_registrations(db, event.id), capacity=event.capacity)
+            event = r3.lock_events(db, [event_id])[event_id]
+            result = r3.cancel_in_transaction(db, event, user_id)
             db.commit()
             return result
         except Exception:
@@ -290,51 +273,13 @@ def cancel_registration(session_factory, event_id, user_id):
 
 
 def register(session_factory, event_id, user_id):
-    """One transaction per registration; all writers must lock the event first.
-
-    MySQL uses an InnoDB event-row lock. SQLite demo uses BEGIN IMMEDIATE
-    because SQLite ignores SELECT FOR UPDATE. Authentication uses a separate
-    session so no earlier read snapshot precedes the lock in this transaction.
-    """
+    # Keep one transaction and an event-row lock; R3 adds a DB workflow gate
+    # before this lock to serialize cross-event conflict checks and promotions.
+    from . import r3
     with session_factory() as db:
         try:
-            if db.bind.dialect.name == "sqlite":
-                db.execute(text("BEGIN IMMEDIATE"))
-            event = db.scalar(select(Event).where(Event.id == event_id).with_for_update())
-            if event is None or not event.is_public:
-                raise HTTPException(404, {"code": "EVENT_NOT_FOUND", "message": "找不到活動"})
-            user = db.get(User, user_id)
-            if user is None or not user.is_active:
-                raise HTTPException(401, {"code": "AUTH_REQUIRED", "message": "請先登入"})
-            # SRD v2: active users may register regardless of role name.
-            # Unit management grants do not limit which events they may attend.
-            if event.is_cancelled:
-                raise HTTPException(409, {"code": "EVENT_CANCELLED", "message": "活動已取消"})
-            existing = find_registration(db, event_id, user_id)
-            count = count_registrations(db, event_id)
-            if existing is not None:
-                result = registration_view(existing, count, event.capacity, True)
-                db.commit()
-                return result
-            now = utc_now()  # Evaluate after obtaining the lock, not before waiting.
-            if now >= event.starts_at:
-                raise HTTPException(409, {"code": "EVENT_STARTED", "message": "活動已開始"})
-            if now < event.registration_opens_at:
-                raise HTTPException(409, {"code": "REGISTRATION_NOT_OPEN", "message": "報名尚未開始"})
-            if now >= event.registration_closes_at:
-                raise HTTPException(409, {"code": "REGISTRATION_CLOSED", "message": "報名已截止"})
-            if event.capacity is not None and count >= event.capacity:
-                raise HTTPException(409, {"code": "EVENT_FULL", "message": "名額已滿"})
-            record = find_registration(db, event_id, user_id, False)
-            if record is None:
-                record = Registration(user_id=user_id, event_id=event_id, registered_at=now)
-                db.add(record)
-            else:
-                record.status = "registered"
-                record.registered_at = now
-                record.cancelled_at = None
-            db.flush()
-            result = registration_view(record, count + 1, event.capacity, False)
+            event = r3.lock_events(db, [event_id])[event_id]
+            result = r3.register_in_transaction(db, event, db.get(User, user_id))
             db.commit()
             return result
         except Exception:
@@ -521,8 +466,9 @@ ATTENDANCE_LABELS = {"unrecorded": "未記錄", "present": "出席", "absent": "
 
 
 def managed_event(db, event_id, user_id, lock=False):
-    if lock and db.bind.dialect.name == "sqlite":
-        db.execute(text("BEGIN IMMEDIATE"))
+    if lock:
+        from .r3 import workflow_lock
+        workflow_lock(db)
     query = select(Event).where(Event.id == event_id)
     event = db.scalar(query.with_for_update() if lock else query)
     if event is None:
@@ -537,23 +483,34 @@ def manage_events(db, user):
     return [event_view(db, event, user) for event in events]
 
 
-def registration_roster(db, event_id, user_id):
+def registration_roster(db, event_id, user_id, keyword=None):
     event = managed_event(db, event_id, user_id)
     rows = db.execute(select(Registration, User).join(User, User.id == Registration.user_id)
                       .where(Registration.event_id == event_id, Registration.status == "registered")
                       .order_by(Registration.registered_at, Registration.id)).all()
     items = []
     for record, user in rows:
+        if keyword and keyword.casefold() not in user.name.casefold() and keyword.casefold() not in user.email.casefold():
+            continue
         department = db.get(Unit, user.department_id) if user.department_id else None
         items.append(dict(registration_id=record.id, name=user.name, email=user.email, identity=user.identity,
                           department=dict(id=department.id, name=department.name) if department else None,
-                          grade=user.grade, registered_at=as_utc(record.registered_at)))
-    return dict(event_id=event.id, registration_count=len(items), registrations=items)
+                          grade=user.grade, registered_at=as_utc(record.registered_at),
+                          attendance_status=record.attendance_status, checked_in_at=as_utc(record.checked_in_at) if record.checked_in_at else None))
+    from . import r3
+    waiting = []
+    for n, record in enumerate(r3.waitlist(db, event_id), 1):
+        person = db.get(User, record.user_id)
+        department = db.get(Unit, person.department_id) if person.department_id else None
+        waiting.append(dict(registration_id=record.id, name=person.name, email=person.email,
+            identity=person.identity, grade=person.grade, department=dict(id=department.id, name=department.name) if department else None,
+            waitlist_position=n, waitlisted_at=as_utc(record.waitlisted_at)))
+    return dict(r3.attendance_counts(db,event), registrations=items, waitlist_count=len(waiting), waitlist=waiting)
 
 
 def notify_event_registrants(db, event, subject, body):
     emails = db.scalars(select(User.email).join(Registration, Registration.user_id == User.id)
-                       .where(Registration.event_id == event.id, Registration.status == "registered")).all()
+                       .where(Registration.event_id == event.id, Registration.status.in_(("registered", "waitlisted")))).all()
     for email in emails:
         queue_email(db, email, subject, body)
 
@@ -570,6 +527,7 @@ def change_display(value):
 
 def edit_event(db, event_id, user_id, payload):
     from .schemas import EventCreate
+    from . import r3
     from pydantic import ValidationError
     event = managed_event(db, event_id, user_id, lock=True)
     if event.is_cancelled or utc_now() >= event.ends_at:
@@ -578,16 +536,22 @@ def edit_event(db, event_id, user_id, payload):
                   contact_information=event.contact_information, start_time=as_utc(event.starts_at),
                   end_time=as_utc(event.ends_at), registration_start=as_utc(event.registration_opens_at),
                   registration_deadline=as_utc(event.registration_closes_at), capacity=event.capacity,
-                  unit_id=event.unit_id, notes=event.notes)
+                  unit_id=event.unit_id, notes=event.notes, waitlist_enabled=event.waitlist_enabled,
+                  waitlist_capacity=event.waitlist_capacity, eligibility_identities=event.eligibility_identities,
+                  eligibility_department_ids=event.eligibility_department_ids, eligibility_grades=event.eligibility_grades)
     changes = payload.model_dump(exclude_unset=True)
     values.update(changes)
+    if changes.get("waitlist_enabled") is False:
+        values["waitlist_capacity"] = None
     try:
         checked = EventCreate.model_validate(values)
     except ValidationError as error:
-        # Only the cross-field time rules raise at model level; anything else is a field format error.
-        if any(not item["loc"] for item in error.errors()):
+        # R3 adds model-level waitlist/eligibility checks; do not mislabel them
+        # as time errors just because Pydantic's error loc is empty.
+        time_rules = ("end_time must", "registration_start must", "registration_deadline must")
+        if any(any(rule in item["msg"] for rule in time_rules) for item in error.errors()):
             fail(422, "EVENT_TIME_INVALID", "活動時間順序不正確")
-        fail(422, "EVENT_FIELD_INVALID", "欄位格式不正確：" + "、".join(str(item["loc"][-1]) for item in error.errors()))
+        fail(422, "EVENT_FIELD_INVALID", "欄位格式不正確：" + "、".join(str(item["loc"][-1]) if item["loc"] else "候補或資格設定" for item in error.errors()))
     if "start_time" in changes and checked.start_time.astimezone(timezone.utc).replace(tzinfo=None) != event.starts_at:
         if checked.start_time.astimezone(timezone.utc).replace(tzinfo=None) < utc_now():
             fail(422, "EVENT_START_IN_PAST", "活動開始時間不得早於現在")
@@ -596,6 +560,15 @@ def edit_event(db, event_id, user_id, payload):
     if "type" in changes and checked.type != event.category:
         if checked.type not in {item.name for item in list_event_types(db)}:
             fail(422, "EVENT_TYPE_INVALID", "請選擇啟用中的活動類型")
+    r3.validate_eligibility_settings(db, checked)
+    if len(r3.waitlist(db,event_id)) > (checked.waitlist_capacity or 0):
+        fail(409, "WAITLIST_BELOW_CURRENT", "候補上限不可低於現有候補人數；請先處理名單")
+    if {"start_time", "end_time"} & changes.keys():
+        r3.overlap_warning(db, event.unit_id, checked.start_time.astimezone(timezone.utc).replace(tzinfo=None),
+                           checked.end_time.astimezone(timezone.utc).replace(tzinfo=None), payload.confirm_overlap, event.id)
+    changes.pop("confirm_overlap", None)
+    changes["waitlist_enabled"], changes["waitlist_capacity"] = checked.waitlist_enabled, checked.waitlist_capacity
+    old_capacity = event.capacity
     mapping = {"type": "category", "start_time": "starts_at", "end_time": "ends_at",
                "registration_start": "registration_opens_at", "registration_deadline": "registration_closes_at"}
     differences = []
@@ -608,7 +581,12 @@ def edit_event(db, event_id, user_id, payload):
             differences.append(f"{CHANGE_LABELS[key]}：{change_display(before)} → {change_display(value)}")
         setattr(event, attr, value)
     if differences:
-        notify_event_registrants(db, event, f"活動異動：{event.name}", "以下為修改前後差異（台灣時間）：\n" + "\n".join(differences))
+        event.notification_revision += 1
+        r3.notify_event_change(db, event, differences, any(x.startswith(("開始時間：", "結束時間：", "地點：")) for x in differences))
+    r3.refresh_request_deadlines(db, event)
+    db.flush()
+    if old_capacity is not None and (event.capacity is None or event.capacity > old_capacity):
+        r3.promote(db, event)
     db.commit()
     return event_view(db, event, db.get(User, user_id))
 
@@ -617,10 +595,13 @@ def cancel_event(db, event_id, user_id, reason):
     event = managed_event(db, event_id, user_id, lock=True)
     if event.is_cancelled or utc_now() >= event.ends_at:
         fail(409, "EVENT_NOT_EDITABLE", "已取消或已結束的活動不可取消")
+    from . import r3
     event.is_cancelled = True
     event.cancellation_reason = reason
     event.cancelled_at = utc_now()
+    r3.audit(db, user_id, "event.cancel", event_id, reason=reason)
     notify_event_registrants(db, event, f"活動取消：{event.name}", f"活動已取消。\n取消原因：{reason}")
+    r3.close_requests_for_cancelled_event(db,event)
     db.commit()
     return event_view(db, event, db.get(User, user_id))
 
@@ -652,7 +633,7 @@ def search_users(db, keyword, unit_id, role, page, page_size):
     return dict(items=items, total=total, page=page, page_size=page_size)
 
 
-def change_unit_manager(db, user_id, unit_id, assign):
+def change_unit_manager(db, user_id, unit_id, assign, actor_id=None):
     user = db.scalar(select(User).where(User.id == user_id).with_for_update())
     unit = db.get(Unit, unit_id)
     if user is None or unit is None:
@@ -668,6 +649,9 @@ def change_unit_manager(db, user_id, unit_id, assign):
         db.delete(grant)
     db.flush()
     user.role = "manager" if db.scalar(select(UnitManager.user_id).where(UnitManager.user_id == user_id).limit(1)) else "member"
+    if actor_id is not None:
+        from .r3 import audit
+        audit(db, actor_id, "unit_manager.assign" if assign else "unit_manager.revoke", user_id, unit_id=unit_id)
     db.commit()
     return user_view(db, user)
 

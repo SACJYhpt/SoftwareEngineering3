@@ -91,7 +91,9 @@ def test_full_and_unlimited(application, client, headers):
     response = client.post(f"/events/{limited}/registrations", headers=other)
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "EVENT_FULL"
-    unlimited = add_event(application, capacity=None)
+    # Keep the capacity scenario independent of the R3 time-conflict rule.
+    now = utc_now()
+    unlimited = add_event(application, capacity=None, starts_at=now + timedelta(days=4), ends_at=now + timedelta(days=4, hours=1))
     for auth in (headers, other):
         assert client.post(f"/events/{unlimited}/registrations", headers=auth).status_code == 201
     assert client.get(f"/events/{unlimited}").json()["registered_count"] == 2

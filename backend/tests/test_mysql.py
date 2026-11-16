@@ -13,8 +13,8 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.engine import make_url
 
-from app.database import Base, build_database
-from app.models import Event, Registration, Unit, User
+from app.database import Base, build_database, schema_is_current
+from app.models import EmailAttempt, Event, OutgoingEmail, Registration, Unit, User
 from app.security import hash_password
 from app.services import cancel_registration, register, utc_now
 
@@ -25,6 +25,7 @@ def test_mysql_concurrent_capacity_and_duplicate():
     assert url.get_backend_name() == "mysql"
     assert url.database == "event_registration_test", "只允許使用專用 event_registration_test 資料庫"
     engine, sessions = build_database(url)
+    assert schema_is_current(engine), "專用 MySQL 測試資料庫須先由資料庫負責人更新為 R3 結構"
     Base.metadata.create_all(engine)
     run_id = uuid4().hex
     user_ids, event_id, unit_id = [], None, None
@@ -80,10 +81,28 @@ def test_mysql_concurrent_capacity_and_duplicate():
         assert sum(item is not None for item in replacements) == 1
         with sessions() as db:
             assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id == event_id, Registration.status == "registered")) == 100
+        # R3 exercises the same real InnoDB locks with a finite waitlist.
+        with sessions.begin() as db:
+            event = db.get(Event,event_id)
+            event.waitlist_enabled, event.waitlist_capacity = True, 20
+            current = set(db.scalars(select(Registration.user_id).where(Registration.event_id==event_id,Registration.status=="registered")))
+        waiting_users=[uid for uid in member_ids if uid not in current][:20]
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            waiting=list(executor.map(lambda uid:register(sessions,event_id,uid),waiting_users))
+        assert sorted(x["waitlist_position"] for x in waiting)==list(range(1,21))
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            list(executor.map(lambda uid:cancel_registration(sessions,event_id,uid),sorted(current)[:10]))
+        with sessions() as db:
+            assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id==event_id,Registration.status=="registered"))==100
+            assert db.scalar(select(func.count(Registration.id)).where(Registration.event_id==event_id,Registration.status=="waitlisted"))==10
     finally:
         with sessions.begin() as db:
             if event_id is not None:
-                db.execute(delete(Registration).where(Registration.event_id == event_id, Registration.status == "registered"))
+                registrations=select(Registration.id).where(Registration.event_id==event_id)
+                emails=select(OutgoingEmail.id).where(OutgoingEmail.registration_id.in_(registrations))
+                db.execute(delete(EmailAttempt).where(EmailAttempt.email_id.in_(emails)))
+                db.execute(delete(OutgoingEmail).where(OutgoingEmail.registration_id.in_(registrations)))
+                db.execute(delete(Registration).where(Registration.event_id == event_id))
                 db.execute(delete(Event).where(Event.id == event_id))
             if unit_id is not None:
                 db.execute(delete(Unit).where(Unit.id == unit_id))
