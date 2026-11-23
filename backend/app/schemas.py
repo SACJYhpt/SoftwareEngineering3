@@ -2,7 +2,7 @@ from datetime import datetime
 import re
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -54,6 +54,12 @@ class EventCreate(BaseModel):
     capacity: int | None = Field(default=None, strict=True, gt=0)
     unit_id: int = Field(strict=True, gt=0)
     notes: str | None = None
+    waitlist_enabled: bool = Field(default=False, strict=True)
+    waitlist_capacity: int | None = Field(default=None, strict=True, gt=0)
+    eligibility_identities: list[Literal["student", "teacher", "staff"]] = Field(default_factory=list)
+    eligibility_department_ids: list[StrictInt] = Field(default_factory=list, max_length=500)
+    eligibility_grades: list[StrictInt] = Field(default_factory=list, max_length=100)
+    confirm_overlap: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def validate_times(self):
@@ -63,6 +69,16 @@ class EventCreate(BaseModel):
             raise ValueError("registration_start must be earlier than registration_deadline")
         if self.registration_deadline > self.start_time:
             raise ValueError("registration_deadline must not be later than start_time")
+        if self.waitlist_enabled and self.capacity is None:
+            raise ValueError("unlimited capacity cannot enable waitlist")
+        if self.waitlist_enabled and self.waitlist_capacity is None:
+            self.waitlist_capacity = (self.capacity + 1) // 2
+        if not self.waitlist_enabled and self.waitlist_capacity is not None:
+            raise ValueError("waitlist_capacity requires waitlist_enabled")
+        if any(type(x) is not int or x <= 0 for x in self.eligibility_department_ids):
+            raise ValueError("eligibility_department_ids must be positive integers")
+        if any(x <= 0 for x in self.eligibility_grades):
+            raise ValueError("eligibility_grades must be positive integers")
         return self
 
 
@@ -94,6 +110,16 @@ class EventResponse(BaseModel):
     my_registration_status: str | None
     can_register: bool
     cancellation_reason: str | None = None
+    waitlist_enabled: bool = False
+    waitlist_capacity: int | None = None
+    eligibility_identities: list[str] = Field(default_factory=list)
+    eligibility_department_ids: list[int] = Field(default_factory=list)
+    eligibility_grades: list[int] = Field(default_factory=list)
+    eligibility_description: str = "不限"
+    waitlist_position: int | None = None
+    cancellation_request: dict | None = None
+    can_cancel_registration: bool = False
+    can_request_cancellation: bool = False
 
 
 class EventSummary(BaseModel):
@@ -109,6 +135,9 @@ class EventSummary(BaseModel):
     capacity: int | None
     status: Literal["報名未開始", "開放中", "已額滿", "已截止", "進行中", "已結束", "已取消"]
     my_registration_status: str | None
+    waitlist_position: int | None = None
+    waitlist_count: int = 0
+    waitlist_enabled: bool = False
 
 
 class MyEventResponse(EventResponse):
@@ -130,13 +159,15 @@ class RegistrationResponse(BaseModel):
     message: str
     registration_id: int
     event_id: int
-    status: Literal["registered"] = "registered"
+    status: Literal["registered", "waitlisted"] = "registered"
     registered_at: datetime
     registration_status: str = "已報名"
     registered_count: int
     registration_count: int
     capacity: int | None
     already_registered: bool
+    waitlist_position: int | None = None
+    waitlist_count: int = 0
 
 
 class EmailRequest(BaseModel):
@@ -220,13 +251,70 @@ class EventUpdate(BaseModel):
     registration_deadline: AwareDatetime | None = None
     capacity: int | None = Field(default=None, strict=True, gt=0)
     notes: str | None = None
+    waitlist_enabled: bool | None = Field(default=None, strict=True)
+    waitlist_capacity: int | None = Field(default=None, strict=True, gt=0)
+    eligibility_identities: list[Literal["student", "teacher", "staff"]] | None = None
+    eligibility_department_ids: list[StrictInt] | None = Field(default=None, max_length=500)
+    eligibility_grades: list[StrictInt] | None = Field(default=None, max_length=100)
+    confirm_overlap: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def no_null_required_fields(self):
-        for key in self.model_fields_set - {"capacity", "notes"}:
+        for key in self.model_fields_set - {"capacity", "notes", "waitlist_capacity"}:
             if getattr(self, key) is None:
                 raise ValueError(f"{key} cannot be null")
         return self
+
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    department_id: int = Field(strict=True, gt=0)
+    grade: int | None = Field(default=None, strict=True, ge=1)
+
+
+class IdentityUpdate(ProfileUpdate):
+    identity: Literal["student", "teacher", "staff"]
+
+
+class RegistrationSwitch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_event_ids: list[StrictInt] = Field(min_length=1, max_length=100)
+    source_status: Literal["registered", "waitlisted"]
+    confirmed: Literal[True]
+
+    @model_validator(mode="after")
+    def positive_sources(self):
+        if any(x <= 0 for x in self.source_event_ids):
+            raise ValueError("source_event_ids must be positive")
+        return self
+
+
+class ConfirmedReason(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    reason: str = Field(min_length=1, max_length=2000)
+    confirmed: Literal[True]
+
+
+class CancellationReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    decision: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def rejection_needs_reason(self):
+        if self.decision == "reject" and not self.reason:
+            raise ValueError("rejection requires reason")
+        return self
+
+
+class AttendanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["present", "absent"]
+
+
+class CancellationActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=1, max_length=2048)
 
 
 class CancelEventRequest(BaseModel):

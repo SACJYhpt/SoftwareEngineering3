@@ -40,6 +40,9 @@ def payload(clock, **overrides):
 
 
 def create(client, application, clock, **overrides):
+    # These MVP scenarios intentionally create overlapping list fixtures;
+    # R3 overlap confirmation has its own acceptance tests.
+    overrides.setdefault("confirm_overlap", True)
     response = client.post("/events", json=payload(clock, **overrides), headers=auth(application, 3))
     assert response.status_code == 201, response.text
     return response.json()
@@ -177,7 +180,7 @@ def test_c12_other_unit_via_api_is_403(client, application, clock):
 
 def test_b01_guest_sees_list_sorted_by_start(client, application, clock):
     later = create(client, application, clock, name="較晚")
-    body = payload(clock, name="較早")
+    body = payload(clock, name="較早", confirm_overlap=True)
     body["start_time"] = (datetime.fromisoformat(body["start_time"]) - timedelta(hours=3)).isoformat()
     earlier = client.post("/events", json=body, headers=auth(application, 3)).json()
     listed = client.get("/events").json()
@@ -188,7 +191,7 @@ def test_b01_guest_sees_list_sorted_by_start(client, application, clock):
 def test_b01_list_is_paged_in_start_order_with_total(client, application, clock):
     base = datetime.fromisoformat(payload(clock)["start_time"])
     for i in range(35):
-        body = payload(clock, name=f"活動 {i:02d}", start_time=(base + timedelta(minutes=i)).isoformat())
+        body = payload(clock, name=f"活動 {i:02d}", start_time=(base + timedelta(minutes=i)).isoformat(), confirm_overlap=True)
         assert client.post("/events", json=body, headers=auth(application, 3)).status_code == 201
     first = client.get("/events")
     second = client.get("/events", params={"offset": 30})

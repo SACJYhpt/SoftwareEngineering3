@@ -211,18 +211,19 @@ def test_edit_notifications_are_transactional_and_only_for_required_fields(appli
     event_id = add_event(application,capacity=2)
     client.post(f'/events/{event_id}/registrations', headers=headers)
     with application.state.sessions() as db:
-        assert db.scalar(select(func.count(OutgoingEmail.id))) == 0
+        # R3 adds a separate registration confirmation; this test scopes F02.
+        assert db.scalar(select(func.count(OutgoingEmail.id)).where(OutgoingEmail.kind == "event_change")) == 0
     assert client.patch(f'/events/{event_id}', json={'description':'不寄信'}, headers=manager).status_code == 200
     response = client.patch(f'/events/{event_id}', json={'location':'新地點','notes':'請準時'}, headers=manager)
     assert response.status_code == 200
     with application.state.sessions() as db:
-        mail = db.scalar(select(OutgoingEmail))
+        mail = db.scalar(select(OutgoingEmail).where(OutgoingEmail.kind == "event_change"))
         assert '海大 → 新地點' in mail.body and '請準時' in mail.body
         assert mail.recipient == 'member@test.invalid' and mail.status == 'pending'
     bad = client.patch(f'/events/{event_id}', json={'registration_deadline':'2030-02-01T00:00:00Z'}, headers=manager)
     assert bad.status_code == 422
     with application.state.sessions() as db:
-        assert db.scalar(select(func.count(OutgoingEmail.id))) == 1
+        assert db.scalar(select(func.count(OutgoingEmail.id)).where(OutgoingEmail.kind == "event_change")) == 1
     # Cannot shrink below active registrations; cancelling a seat permits shrinking.
     other = {'Authorization':'Bearer '+issue_token(2,application.state.settings)}
     client.post(f'/events/{event_id}/registrations', headers=other)
@@ -243,7 +244,7 @@ def test_cancel_event_stops_registration_and_notifies_active_registrants(applica
     assert client.delete(f'/events/{event_id}/registrations/me',headers=headers).status_code==409
     assert client.patch(f'/events/{event_id}',json={'name':'不可修改'},headers=manager).status_code==409
     with application.state.sessions() as db:
-        assert db.scalar(select(OutgoingEmail.body)).endswith('颱風取消')
+        assert db.scalar(select(OutgoingEmail.body).where(OutgoingEmail.subject.startswith('活動取消：'))).endswith('颱風取消')
         assert db.get(Event,event_id).cancellation_reason=='颱風取消'
 
 

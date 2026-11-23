@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -91,6 +91,7 @@ class Event(Base):
         CheckConstraint("ends_at > starts_at", name="ck_event_time"),
         CheckConstraint("registration_opens_at < registration_closes_at", name="ck_registration_time"),
         CheckConstraint("registration_closes_at <= starts_at", name="ck_registration_before_event"),
+        CheckConstraint("NOT waitlist_enabled OR (capacity IS NOT NULL AND waitlist_capacity > 0)", name="ck_event_waitlist"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -114,13 +115,21 @@ class Event(Base):
     is_cancelled: Mapped[bool] = mapped_column(default=False)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    waitlist_enabled: Mapped[bool] = mapped_column(default=False, server_default=text("0"))
+    waitlist_capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eligibility_identities: Mapped[list] = mapped_column(JSON, default=list)
+    eligibility_department_ids: Mapped[list] = mapped_column(JSON, default=list)
+    eligibility_grades: Mapped[list] = mapped_column(JSON, default=list)
+    check_in_used: Mapped[bool] = mapped_column(default=False, server_default=text("0"))
+    notification_revision: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
 
 class Registration(Base):
     __tablename__ = "registrations"
     __table_args__ = (
         UniqueConstraint("user_id", "event_id", name="uq_registration_user_event"),
-        CheckConstraint("status IN ('registered', 'cancelled')", name="ck_registration_status"),
+        CheckConstraint("status IN ('registered', 'cancelled', 'waitlisted', 'not_promoted')", name="ck_registration_status"),
+        CheckConstraint("status != 'waitlisted' OR waitlisted_at IS NOT NULL", name="ck_waitlist_timestamp"),
         CheckConstraint("attendance_status IN ('unrecorded', 'present', 'absent', 'leave')",
                         name="ck_registration_attendance"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
@@ -134,6 +143,10 @@ class Registration(Base):
     # ER-US-H03: R2 has no check-in, so every record stays "unrecorded" (未記錄); check-in (R3)
     # writes present/absent, and leave (請假) arrives with ER-US-H02.
     attendance_status: Mapped[str] = mapped_column(String(20), default="unrecorded", server_default="unrecorded")
+    waitlisted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
 
 class PublishedDocument(Base):
@@ -188,6 +201,58 @@ class OutgoingEmail(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # R3 metadata makes scheduled mail idempotent and invalidates stale reminders.
+    deduplication_key: Mapped[str | None] = mapped_column(String(191), nullable=True, unique=True)
+    kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"), nullable=True, index=True)
+    event_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    event_start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    registration_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reschedule_notice: Mapped[bool] = mapped_column(default=False, server_default=text("0"))
+
+
+class RegistrationWorkflowLock(Base):
+    """One DB coordination row for atomic cross-event switches and promotions.
+
+    All R3 roster writers acquire this before sorted event-row locks. This
+    deliberately trades cross-event write throughput for simple deadlock-free
+    consistency, including a user's concurrent registrations in different events.
+    No external queue or in-process lock is involved.
+    """
+    __tablename__ = "registration_workflow_locks"
+    __table_args__ = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+
+class CancellationRequest(Base):
+    __tablename__ = "cancellation_requests"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'auto_approved')", name="ck_cancellation_request_status"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    registration_id: Mapped[int] = mapped_column(ForeignKey("registrations.id"), index=True)
+    # Only pending requests retain this unique key; historical requests remain.
+    active_registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"), unique=True, nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    submitted_at: Mapped[datetime] = mapped_column(DateTime)
+    auto_approve_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    __table_args__ = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    target: Mapped[str] = mapped_column(String(191))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    details: Mapped[dict] = mapped_column(JSON)
 
 
 class EmailAttempt(Base):
@@ -207,3 +272,14 @@ class BackupRecord(Base):
     status: Mapped[str] = mapped_column(String(20))
     filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+# J01: application-managed audit records are append-only; no purge job or
+# update/delete route exists. Deployment must also restrict DB account rights.
+from sqlalchemy import event as sqlalchemy_event
+
+
+@sqlalchemy_event.listens_for(AuditLog, "before_update")
+@sqlalchemy_event.listens_for(AuditLog, "before_delete")
+def reject_audit_change(mapper, connection, target):
+    raise ValueError("Audit records are append-only")

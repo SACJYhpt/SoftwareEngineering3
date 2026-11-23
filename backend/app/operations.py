@@ -53,6 +53,11 @@ def process_mail(sessions, settings, limit=20):
             if mail is None:
                 db.rollback()
                 break
+            from .r3 import reminder_is_current
+            if not reminder_is_current(db,mail):
+                mail.status = "cancelled"
+                db.commit()
+                continue
             mail.status = "sending"
             mail.next_attempt_at = now + timedelta(minutes=5)
             email_id, recipient, subject, body = mail.id, mail.recipient, mail.subject, mail.body

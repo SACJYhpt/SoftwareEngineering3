@@ -11,6 +11,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
 from . import services
+from . import r3
+from .schemas import (AttendanceUpdate, CancellationActionRequest, CancellationReview, ConfirmedReason,
+                      IdentityUpdate, ProfileUpdate, RegistrationSwitch)
 from .config import Settings
 from .database import Base, build_database, schema_is_current
 from .models import BackupRecord, EmailAttempt, Event, EventType, OutgoingEmail, RevokedToken, Unit, User
@@ -71,7 +74,7 @@ def create_app(settings=None):
     async def lifespan(app):
         if not schema_is_current(engine):
             engine.dispose()
-            raise RuntimeError("資料庫結構仍為舊版；請改用全新的 R2 測試資料庫，或由資料庫負責人更新結構。未自動修改原資料。")
+            raise RuntimeError("資料庫結構仍為舊版；請改用全新的 R3 測試資料庫，或由資料庫負責人更新結構。未自動修改原資料。")
         if settings.app_env == "development":
             Base.metadata.create_all(engine)
         yield
@@ -81,6 +84,7 @@ def create_app(settings=None):
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessions = sessions
+    sessions.configure(info={"settings": settings})
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins),
                        allow_credentials=False, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -233,8 +237,8 @@ def create_app(settings=None):
         return services.manage_events(db, user)
 
     @app.get("/events/{event_id}/registrations", tags=["活動管理"])
-    def roster(event_id: int, db=Depends(get_db), user=Depends(required_user)):
-        return services.registration_roster(db, event_id, user.id)
+    def roster(event_id: int, q: str | None = Query(default=None, max_length=200), db=Depends(get_db), user=Depends(required_user)):
+        return services.registration_roster(db, event_id, user.id, q.strip() if q else None)
 
     @app.patch("/events/{event_id}", response_model=EventResponse, tags=["活動管理"])
     def edit(event_id: int, payload: EventUpdate, db=Depends(get_db), user=Depends(required_user)):
@@ -259,15 +263,18 @@ def create_app(settings=None):
                      role: Literal["member", "manager", "admin"] | None = None,
                      page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
                      db=Depends(get_db), user=Depends(required_admin)):
-        return services.search_users(db, q, unit_id, role, page, page_size)
+        result = services.search_users(db, q, unit_id, role, page, page_size)
+        r3.audit(db,user.id,"user.search","users",q=q,unit_id=unit_id,role=role,page=page,page_size=page_size)
+        db.commit()
+        return result
 
     @app.put("/admin/units/{unit_id}/managers/{user_id}", tags=["系統管理"])
     def assign(unit_id: int, user_id: int, db=Depends(get_db), admin=Depends(required_admin)):
-        return services.change_unit_manager(db, user_id, unit_id, True)
+        return services.change_unit_manager(db, user_id, unit_id, True, actor_id=admin.id)
 
     @app.delete("/admin/units/{unit_id}/managers/{user_id}", tags=["系統管理"])
     def revoke(unit_id: int, user_id: int, db=Depends(get_db), admin=Depends(required_admin)):
-        return services.change_unit_manager(db, user_id, unit_id, False)
+        return services.change_unit_manager(db, user_id, unit_id, False, actor_id=admin.id)
 
     @app.get("/admin/units", tags=["系統管理"])
     def units(db=Depends(get_db), admin=Depends(required_admin)):
@@ -308,7 +315,7 @@ def create_app(settings=None):
         return services.publish_document(db, kind, payload.content)
 
     @app.get("/admin/emails", tags=["維運"])
-    def emails(status: Literal["pending", "sending", "sent", "failed"] | None = None,
+    def emails(status: Literal["pending", "sending", "sent", "failed", "cancelled"] | None = None,
                page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
                db=Depends(get_db), admin=Depends(required_admin)):
         query = select(OutgoingEmail).order_by(OutgoingEmail.id.desc())
@@ -336,5 +343,71 @@ def create_app(settings=None):
         return [dict(id=x.id, created_at=services.as_utc(x.created_at), status=x.status, filename=x.filename, error=x.error)
                 for x in db.scalars(select(BackupRecord).where(BackupRecord.created_at >= services.utc_now() - timedelta(days=7))
                                     .order_by(BackupRecord.created_at.desc()))]
+
+    @app.patch("/me/profile", response_model=UserResponse, tags=["R3 個人資料"])
+    def profile(payload: ProfileUpdate, db=Depends(get_db), user=Depends(required_user)):
+        return r3.update_profile(db,user.id,payload)
+
+    @app.patch("/admin/users/{user_id}/identity", response_model=UserResponse, tags=["R3 系統管理"])
+    def identity(user_id: int, payload: IdentityUpdate, db=Depends(get_db), admin=Depends(required_admin)):
+        return r3.update_profile(db,user_id,payload,admin.id)
+
+    @app.post("/events/{event_id}/registrations/switch", response_model=RegistrationResponse, tags=["R3 報名"])
+    def switch(event_id: int, payload: RegistrationSwitch, request: Request, user=Depends(required_user)):
+        return r3.switch_registration(request.app.state.sessions,event_id,user.id,payload)
+
+    @app.post("/events/{event_id}/registrations/{registration_id}/remove", tags=["R3 活動管理"])
+    def remove(event_id: int, registration_id: int, payload: ConfirmedReason, db=Depends(get_db), user=Depends(required_user)):
+        return r3.remove_registrant(db,event_id,registration_id,user.id,payload.reason)
+
+    @app.post("/events/{event_id}/cancellation-requests", status_code=201, tags=["R3 取消申請"])
+    def request_cancellation(event_id: int, payload: ConfirmedReason, db=Depends(get_db), user=Depends(required_user)):
+        return r3.submit_request(db,event_id,user.id,payload.reason)
+
+    @app.get("/events/{event_id}/cancellation-requests", tags=["R3 取消申請"])
+    def cancellation_requests(event_id: int, db=Depends(get_db), user=Depends(required_user)):
+        from .models import CancellationRequest, Registration
+        services.managed_event(db,event_id,user.id)
+        return [r3.request_view(x) for x in db.scalars(select(CancellationRequest)
+            .join(Registration,Registration.id==CancellationRequest.registration_id)
+            .where(Registration.event_id==event_id).order_by(CancellationRequest.id.desc()))]
+
+    @app.post("/cancellation-requests/{request_id}/review", tags=["R3 取消申請"])
+    def review(request_id: int, payload: CancellationReview, db=Depends(get_db), user=Depends(required_user)):
+        return r3.review_request(db,request_id,user.id,payload)
+
+    @app.post("/me/cancellation-action", tags=["R3 取消申請"])
+    def action(payload: CancellationActionRequest, db=Depends(get_db), user=Depends(required_user)):
+        return r3.cancellation_action(db,user.id,payload.token,settings)
+
+    @app.get("/events/{event_id}/registrations.csv", tags=["R3 活動管理"])
+    def csv_roster(event_id: int, db=Depends(get_db), user=Depends(required_user)):
+        return Response(r3.export_roster(db,event_id,user.id),media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition":f'attachment; filename="event-{event_id}-registrations.csv"'})
+
+    @app.get("/events/{event_id}/attendance", tags=["R3 報到"])
+    def attendance(event_id: int, db=Depends(get_db), user=Depends(required_user)):
+        event=services.managed_event(db,event_id,user.id)
+        return r3.attendance_counts(db,event)
+
+    @app.post("/events/{event_id}/registrations/{registration_id}/check-in", tags=["R3 報到"])
+    def check_in(event_id: int, registration_id: int, db=Depends(get_db), user=Depends(required_user)):
+        return r3.set_attendance(db,event_id,registration_id,user.id,"check_in")
+
+    @app.delete("/events/{event_id}/registrations/{registration_id}/check-in", tags=["R3 報到"])
+    def undo_check_in(event_id: int, registration_id: int, db=Depends(get_db), user=Depends(required_user)):
+        return r3.set_attendance(db,event_id,registration_id,user.id,"undo")
+
+    @app.patch("/events/{event_id}/registrations/{registration_id}/attendance", tags=["R3 報到"])
+    def correct_attendance(event_id: int, registration_id: int, payload: AttendanceUpdate, db=Depends(get_db), user=Depends(required_user)):
+        return r3.set_attendance(db,event_id,registration_id,user.id,payload.status)
+
+    @app.get("/admin/audit-logs", tags=["R3 稽核"])
+    def audit_logs(page: int = Query(default=1,ge=1), page_size: int = Query(default=30,ge=1,le=100),
+                   db=Depends(get_db), admin=Depends(required_admin)):
+        from .models import AuditLog
+        return [dict(id=x.id,actor_id=x.actor_id,action=x.action,target=x.target,
+            recorded_at=services.as_utc(x.recorded_at),details=x.details) for x in db.scalars(
+            select(AuditLog).order_by(AuditLog.id.desc()).offset((page-1)*page_size).limit(page_size))]
 
     return app

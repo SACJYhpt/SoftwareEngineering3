@@ -25,7 +25,7 @@ def auth(application, user_id):
 def create(client, application, clock, **overrides):
     base = clock.replace(tzinfo=timezone.utc)
     body = dict(unit_id=1, name="活動", type="講座", description="說明", location="海大",
-                contact_information="x@test.invalid", capacity=10,
+                contact_information="x@test.invalid", capacity=10, confirm_overlap=True,
                 start_time=(base + timedelta(days=2)).astimezone(TW).isoformat(),
                 end_time=(base + timedelta(days=2, hours=2)).astimezone(TW).isoformat(),
                 registration_start=(base - timedelta(hours=1)).astimezone(TW).isoformat(),
