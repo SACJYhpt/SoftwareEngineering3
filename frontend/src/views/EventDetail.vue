@@ -64,6 +64,9 @@
                 <p v-if="action.hint" class="muted hint">{{ action.hint }}</p>
                 <!-- 截止前取消報名，需二次確認 (ER-US-E02) -->
                 <template v-if="event.my_registration_status === '已報名'">
+                    <p v-if="event.can_cancel_registration && event.direct_cancel_deadline" class="muted hint cancel-deadline">
+                        可直接取消至 {{ formatDateTime(event.direct_cancel_deadline) }} 前。
+                    </p>
                     <button v-if="event.can_cancel_registration" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
                         取消報名
                     </button>

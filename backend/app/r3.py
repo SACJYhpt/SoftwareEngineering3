@@ -231,17 +231,24 @@ def request_view(item):
                 rejection_reason=item.rejection_reason)
 
 
-def can_direct_cancel(db, event, record, now):
+def direct_cancel_deadline(db, event, record, now):
     if record.status not in ACTIVE or event.is_cancelled or now >= event.starts_at:
-        return False
+        return None
     if now < event.registration_closes_at:
-        return True
+        return event.registration_closes_at
     if record.status != "registered":
-        return False
+        return None
     sent = db.scalar(select(func.max(OutgoingEmail.sent_at)).where(OutgoingEmail.registration_id == record.id,
         OutgoingEmail.registration_revision == record.revision, OutgoingEmail.reschedule_notice.is_(True),
         OutgoingEmail.status == "sent"))
-    return sent is not None and now < sent + timedelta(hours=72)
+    if sent is None:
+        return None
+    deadline = min(sent + timedelta(hours=72), event.starts_at)
+    return deadline if now < deadline else None
+
+
+def can_direct_cancel(db, event, record, now):
+    return direct_cancel_deadline(db, event, record, now) is not None
 
 
 def cancel_record(db, event, record, reason, allow_promotion=True, notice="已取消報名"):
@@ -464,7 +471,7 @@ def registration_context(db, event, user, activity_status):
         eligibility_identities=event.eligibility_identities, eligibility_department_ids=event.eligibility_department_ids,
         eligibility_grades=event.eligibility_grades, eligibility_description=eligibility_description(db,event),
         waitlist_count=len(waiting), waitlist_position=None, cancellation_request=None,
-        can_request_cancellation=False, can_cancel_registration=False)
+        can_request_cancellation=False, can_cancel_registration=False, direct_cancel_deadline=None)
     if user is None:
         return data
     record = s.find_registration(db,event.id,user.id,False)
@@ -476,7 +483,9 @@ def registration_context(db, event, user, activity_status):
     if request:
         data["cancellation_request"] = request_view(request)
     now = s.utc_now()
-    data["can_cancel_registration"] = record is not None and can_direct_cancel(db,event,record,now)
+    deadline = direct_cancel_deadline(db,event,record,now) if record is not None else None
+    data["direct_cancel_deadline"] = s.as_utc(deadline) if deadline is not None else None
+    data["can_cancel_registration"] = deadline is not None
     data["can_request_cancellation"] = bool(record and record.status == "registered" and request is None
         and not event.is_cancelled and event.registration_closes_at <= now < event.starts_at)
     data["can_register"] = bool(user.is_active and (record is None or record.status not in ACTIVE) and
