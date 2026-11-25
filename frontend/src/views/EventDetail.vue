@@ -55,16 +55,22 @@
                 <p v-if="event.my_registration_status" class="my-status">
                     我的報名狀態：<strong>{{ event.my_registration_status }}</strong>
                 </p>
+                <div v-if="hasPendingCancellation" class="alert alert-info" role="status">
+                    取消申請審核中。若管理者尚未處理，系統將於 {{ formatDateTime(event.cancellation_request.auto_approve_at) }} 自動核准。
+                </div>
                 <button class="btn btn-large" :disabled="!action.enabled || submitting" @click="onRegister">
                     {{ submitting ? '送出中…' : action.label }}
                 </button>
                 <p v-if="action.hint" class="muted hint">{{ action.hint }}</p>
                 <!-- 截止前取消報名，需二次確認 (ER-US-E02) -->
                 <template v-if="event.my_registration_status === '已報名'">
-                    <button v-if="canCancel" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
+                    <button v-if="event.can_cancel_registration" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
                         取消報名
                     </button>
-                    <p v-else class="muted hint">報名已截止，無法取消報名。</p>
+                    <router-link v-else-if="event.can_request_cancellation" class="btn btn-outline btn-large cancel" :to="cancellationRequestPath">
+                        申請取消
+                    </router-link>
+                    <p v-else-if="!hasPendingCancellation" class="muted hint">目前無法取消報名或提出取消申請。</p>
                 </template>
                 <div v-if="message" :class="['alert', message.ok ? 'alert-ok' : 'alert-error']" role="status">
                     {{ message.text }}
@@ -79,7 +85,7 @@
     import { useRoute, useRouter } from 'vue-router'
     import { download, request } from '../api'
     import { isLoggedIn, managedUnits } from '../auth'
-    import { STATUS_TONE, capacityText, formatRange } from '../format'
+    import { STATUS_TONE, capacityText, formatDateTime, formatRange } from '../format'
 
     const route = useRoute()
     const router = useRouter()
@@ -91,12 +97,9 @@
     const shareMessage = ref('')
 
     const shareUrl = computed(() => `${window.location.origin}/events/${route.params.id}`)
+    const cancellationRequestPath = computed(() => `/events/${route.params.id}/cancellation-request`)
+    const hasPendingCancellation = computed(() => event.value?.cancellation_request?.status === 'pending')
     const canManage = computed(() => event.value && managedUnits.value.some((unit) => unit.id === event.value.unit_id))
-    // Cancelling is open until the deadline, like registering (ER-US-E02).
-    const canCancel = computed(() => {
-        const e = event.value
-        return !['已截止', '進行中', '已結束', '已取消'].includes(e.status) && new Date() < new Date(e.registration_deadline)
-    })
 
     async function copyLink() {
         try {

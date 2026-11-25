@@ -27,12 +27,20 @@
                         <p class="muted">取消期限：{{ formatDateTime(event.registration_deadline) }} 前</p>
                     </div>
                     <div class="actions">
-                        <span class="badge badge-ok">已報名</span>
+                        <span :class="['badge', event.cancellation_request?.status === 'pending' ? 'badge-warn' : 'badge-ok']">
+                            {{ event.cancellation_request?.status === 'pending' ? '取消申請審核中' : '已報名' }}
+                        </span>
+                        <p v-if="event.cancellation_request?.status === 'pending'" class="muted small pending-note">
+                            預計自動核准：{{ formatDateTime(event.cancellation_request.auto_approve_at) }}
+                        </p>
                         <!-- 截止前可取消，需二次確認 (ER-US-E02) -->
                         <button v-if="event.can_cancel_registration" class="btn btn-outline" :disabled="busyId === event.id" @click="cancel(event)">
                             {{ busyId === event.id ? '取消中…' : '取消報名' }}
                         </button>
-                        <span v-else class="muted small">已截止，無法取消</span>
+                        <router-link v-else-if="event.can_request_cancellation" class="btn btn-outline" :to="`/events/${event.id}/cancellation-request`">
+                            申請取消
+                        </router-link>
+                        <span v-else-if="event.cancellation_request?.status !== 'pending'" class="muted small">已截止，無法取消</span>
                     </div>
                 </li>
             </ul>
@@ -147,6 +155,10 @@
     }
     .small {
         font-size: 0.88rem;
+    }
+    .pending-note {
+        margin: 0;
+        text-align: right;
     }
     .empty {
         padding: 32px 0;

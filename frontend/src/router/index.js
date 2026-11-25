@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { isAdmin, isLoggedIn, managedUnits, refreshUser } from '../auth'
 import Home from '../views/Home.vue'
 import EventDetail from '../views/EventDetail.vue'
+import CancellationRequest from '../views/CancellationRequest.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import VerifyEmail from '../views/VerifyEmail.vue'
@@ -19,6 +20,7 @@ import Admin from '../views/Admin.vue'
 const routes = [
     { path: '/', component: Home }, // 首頁、搜尋、篩選 (ER-US-B01、B04、B05)
     { path: '/events/:id(\\d+)', component: EventDetail }, // 活動詳情、分享、取消報名 (ER-US-B02、B11、E02)
+    { path: '/events/:id(\\d+)/cancellation-request', component: CancellationRequest, meta: { requiresAuth: true } }, // 截止後取消申請 (ER-US-E02)
     { path: '/event/:id(\\d+)', redirect: (to) => `/events/${to.params.id}` }, // 舊網址相容
     { path: '/login', component: Login }, // 登入 (ER-US-A04、A07、D02)
     { path: '/register', component: Register }, // 註冊與個資同意 (ER-US-A01、A02)
