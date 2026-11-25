@@ -368,9 +368,11 @@ def create_app(settings=None):
     def cancellation_requests(event_id: int, db=Depends(get_db), user=Depends(required_user)):
         from .models import CancellationRequest, Registration
         services.managed_event(db,event_id,user.id)
-        return [r3.request_view(x) for x in db.scalars(select(CancellationRequest)
+        rows = db.execute(select(CancellationRequest, User.name)
             .join(Registration,Registration.id==CancellationRequest.registration_id)
-            .where(Registration.event_id==event_id).order_by(CancellationRequest.id.desc()))]
+            .join(User,User.id==Registration.user_id)
+            .where(Registration.event_id==event_id).order_by(CancellationRequest.id.desc())).all()
+        return [dict(r3.request_view(request), applicant_name=name) for request, name in rows]
 
     @app.post("/cancellation-requests/{request_id}/review", tags=["R3 取消申請"])
     def review(request_id: int, payload: CancellationReview, db=Depends(get_db), user=Depends(required_user)):

@@ -32,6 +32,8 @@
                         <span class="muted small">報名紀錄 #{{ item.registration_id }}</span>
                     </div>
                     <dl class="facts">
+                        <dt>申請人</dt>
+                        <dd>{{ item.applicant_name || '姓名未提供' }}</dd>
                         <dt>申請原因</dt>
                         <dd class="reason">{{ item.reason }}</dd>
                         <dt>送出時間</dt>
