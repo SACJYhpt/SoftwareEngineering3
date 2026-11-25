@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { isAdmin, isLoggedIn, managedUnits, refreshUser } from '../auth'
 import Home from '../views/Home.vue'
 import EventDetail from '../views/EventDetail.vue'
+import CancellationRequest from '../views/CancellationRequest.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import VerifyEmail from '../views/VerifyEmail.vue'
@@ -11,6 +12,7 @@ import Faq from '../views/Faq.vue'
 import MyEvents from '../views/MyEvents.vue'
 import CreateEvent from '../views/CreateEvent.vue'
 import ManageEvents from '../views/ManageEvents.vue'
+import ManageCancellationRequests from '../views/ManageCancellationRequests.vue'
 import EditEvent from '../views/EditEvent.vue'
 import Roster from '../views/Roster.vue'
 import OrganizerTerms from '../views/OrganizerTerms.vue'
@@ -19,6 +21,7 @@ import Admin from '../views/Admin.vue'
 const routes = [
     { path: '/', component: Home }, // 首頁、搜尋、篩選 (ER-US-B01、B04、B05)
     { path: '/events/:id(\\d+)', component: EventDetail }, // 活動詳情、分享、取消報名 (ER-US-B02、B11、E02)
+    { path: '/events/:id(\\d+)/cancellation-request', component: CancellationRequest, meta: { requiresAuth: true } }, // 截止後取消申請 (ER-US-E02)
     { path: '/event/:id(\\d+)', redirect: (to) => `/events/${to.params.id}` }, // 舊網址相容
     { path: '/login', component: Login }, // 登入 (ER-US-A04、A07、D02)
     { path: '/register', component: Register }, // 註冊與個資同意 (ER-US-A01、A02)
@@ -31,6 +34,7 @@ const routes = [
     { path: '/events/new', component: CreateEvent, meta: { requiresManager: true } }, // 建立活動 (ER-US-C01)
     { path: '/manage', component: ManageEvents, meta: { requiresManager: true } }, // 單位活動 (ER-US-C15、F07、B11)
     { path: '/manage/events/:id(\\d+)/edit', component: EditEvent, meta: { requiresManager: true } }, // 修改活動 (ER-US-F01)
+    { path: '/manage/events/:id(\\d+)/cancellation-requests', component: ManageCancellationRequests, meta: { requiresManager: true } }, // 取消申請審核 (ER-US-E02)
     { path: '/manage/events/:id(\\d+)/registrations', component: Roster, meta: { requiresManager: true } }, // 名單 (ER-US-G01)
     { path: '/admin', component: Admin, meta: { requiresAdmin: true } }, // 系統管理 (ER-US-I01、I02、I05、I06、I12、J02、J03)
     { path: '/:pathMatch(.*)*', redirect: '/' },

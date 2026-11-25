@@ -57,6 +57,7 @@
                         <td>{{ capacityText(event) }}</td>
                         <td class="ops">
                             <router-link class="btn btn-outline btn-small" :to="`/manage/events/${event.id}/registrations`">名單</router-link>
+                            <router-link class="btn btn-outline btn-small" :to="`/manage/events/${event.id}/cancellation-requests`">取消申請</router-link>
                             <template v-if="editable(event)">
                                 <router-link class="btn btn-outline btn-small" :to="`/manage/events/${event.id}/edit`">修改</router-link>
                                 <button class="btn btn-outline btn-small" type="button" @click="startCancel(event)">取消活動</button>

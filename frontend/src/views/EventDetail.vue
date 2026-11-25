@@ -8,6 +8,23 @@
             <p class="muted">{{ loadError.status === 404 ? '活動可能不存在或尚未公開。' : loadError.message }}</p>
         </div>
 
+        <section v-else-if="cancellationAction" class="panel cancel-landing">
+            <h1>取消報名確認</h1>
+            <h2 v-if="event" class="cancel-event-name">{{ event.name }}</h2>
+            <p v-if="event" class="muted">活動時間：{{ formatRange(event.start_time, event.end_time) }}</p>
+            <p>確認後會立即取消這筆報名。若你不想取消，請返回活動詳情即可。</p>
+            <p v-if="cancellationAction.message" class="alert alert-info">{{ cancellationAction.message }}</p>
+            <p v-if="cancellationActionError" class="alert alert-error" role="alert">{{ cancellationActionError }}</p>
+            <div class="landing-actions">
+                <button class="btn btn-danger" type="button" :disabled="actionSubmitting" @click="confirmLinkedCancellation">
+                    {{ actionSubmitting ? '處理中…' : '確認取消報名' }}
+                </button>
+                <button class="btn btn-outline" type="button" :disabled="actionSubmitting" @click="dismissLinkedCancellation">
+                    返回活動詳情
+                </button>
+            </div>
+        </section>
+
         <div v-else-if="event" class="layout">
             <section class="panel info">
                 <div class="badges">
@@ -55,16 +72,29 @@
                 <p v-if="event.my_registration_status" class="my-status">
                     我的報名狀態：<strong>{{ event.my_registration_status }}</strong>
                 </p>
+                <div v-if="cancellationActionError" class="alert alert-error" role="alert">
+                    {{ cancellationActionError }}
+                    <button v-if="actionRetryable" class="btn btn-outline btn-small retry-action" type="button" @click="resolveCancellationLink">重試</button>
+                </div>
+                <div v-if="hasPendingCancellation" class="alert alert-info" role="status">
+                    取消申請審核中。若管理者尚未處理，系統將於 {{ formatDateTime(event.cancellation_request.auto_approve_at) }} 自動核准。
+                </div>
                 <button class="btn btn-large" :disabled="!action.enabled || submitting" @click="onRegister">
                     {{ submitting ? '送出中…' : action.label }}
                 </button>
                 <p v-if="action.hint" class="muted hint">{{ action.hint }}</p>
                 <!-- 截止前取消報名，需二次確認 (ER-US-E02) -->
                 <template v-if="event.my_registration_status === '已報名'">
-                    <button v-if="canCancel" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
+                    <p v-if="event.can_cancel_registration && event.direct_cancel_deadline" class="muted hint cancel-deadline">
+                        可直接取消至 {{ formatDateTime(event.direct_cancel_deadline) }} 前。
+                    </p>
+                    <button v-if="event.can_cancel_registration" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
                         取消報名
                     </button>
-                    <p v-else class="muted hint">報名已截止，無法取消報名。</p>
+                    <router-link v-else-if="event.can_request_cancellation" class="btn btn-outline btn-large cancel" :to="cancellationRequestPath">
+                        申請取消
+                    </router-link>
+                    <p v-else-if="!hasPendingCancellation" class="muted hint">目前無法取消報名或提出取消申請。</p>
                 </template>
                 <div v-if="message" :class="['alert', message.ok ? 'alert-ok' : 'alert-error']" role="status">
                     {{ message.text }}
@@ -79,7 +109,7 @@
     import { useRoute, useRouter } from 'vue-router'
     import { download, request } from '../api'
     import { isLoggedIn, managedUnits } from '../auth'
-    import { STATUS_TONE, capacityText, formatRange } from '../format'
+    import { STATUS_TONE, capacityText, formatDateTime, formatRange } from '../format'
 
     const route = useRoute()
     const router = useRouter()
@@ -87,16 +117,125 @@
     const loading = ref(true)
     const loadError = ref(null)
     const submitting = ref(false)
+    const actionSubmitting = ref(false)
+    const cancellationAction = ref(null)
+    const cancellationActionError = ref('')
+    const actionRetryable = ref(false)
     const message = ref(null)
     const shareMessage = ref('')
+    const CANCEL_ACTION_TOKEN_KEY = 'ntou-cancellation-action-token'
+    let resolvingCancellationLink = false
 
     const shareUrl = computed(() => `${window.location.origin}/events/${route.params.id}`)
+    const cancellationRequestPath = computed(() => `/events/${route.params.id}/cancellation-request`)
+    const hasPendingCancellation = computed(() => event.value?.cancellation_request?.status === 'pending')
     const canManage = computed(() => event.value && managedUnits.value.some((unit) => unit.id === event.value.unit_id))
-    // Cancelling is open until the deadline, like registering (ER-US-E02).
-    const canCancel = computed(() => {
-        const e = event.value
-        return !['已截止', '進行中', '已結束', '已取消'].includes(e.status) && new Date() < new Date(e.registration_deadline)
-    })
+
+    function captureCancellationToken() {
+        if (!window.location.hash) return
+        const token = new URLSearchParams(window.location.hash.slice(1)).get('cancel_token')
+        if (!token) return
+        try {
+            sessionStorage.setItem(CANCEL_ACTION_TOKEN_KEY, token)
+        } catch {
+            cancellationActionError.value = '瀏覽器無法暫存通知連結，請重新開啟信件中的連結。'
+        }
+        // Keep the action token out of the visible URL and browser history immediately.
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`)
+    }
+
+    function savedCancellationToken() {
+        try {
+            return sessionStorage.getItem(CANCEL_ACTION_TOKEN_KEY)
+        } catch {
+            return null
+        }
+    }
+
+    function clearCancellationToken() {
+        try {
+            sessionStorage.removeItem(CANCEL_ACTION_TOKEN_KEY)
+        } catch {
+            // The token is also removed from the URL; storage may be unavailable in private mode.
+        }
+    }
+
+    async function resolveCancellationLink() {
+        if (resolvingCancellationLink) return
+        const token = savedCancellationToken()
+        if (!token) return
+        if (!isLoggedIn.value) {
+            await router.replace({ path: '/login', query: { redirect: `/events/${route.params.id}` } })
+            return
+        }
+
+        resolvingCancellationLink = true
+        cancellationActionError.value = ''
+        actionRetryable.value = false
+        try {
+            const result = await request('/me/cancellation-action', { method: 'POST', body: { token } })
+            if (Number(result.event_id) !== Number(route.params.id) || result.confirmation_required !== true) {
+                clearCancellationToken()
+                cancellationActionError.value = '取消連結資料不完整或與目前活動不符。'
+                return
+            }
+            if (result.action === 'cancel' && result.method === 'DELETE'
+                && result.path === `/events/${route.params.id}/registrations/me`) {
+                cancellationAction.value = result
+                return
+            }
+            if (result.action === 'request_cancellation' && result.method === 'POST'
+                && result.path === `/events/${route.params.id}/cancellation-requests`) {
+                clearCancellationToken()
+                await router.replace(`/events/${route.params.id}/cancellation-request?fromNotification=1`)
+                return
+            }
+            clearCancellationToken()
+            cancellationActionError.value = '取消連結提供了無法辨識的操作。'
+        } catch (error) {
+            if (error.code === 'AUTH_REQUIRED' || error.code === 'INVALID_TOKEN') {
+                await router.replace({ path: '/login', query: { redirect: `/events/${route.params.id}` } })
+            } else if (error.code === 'CANCELLATION_LINK_INVALID') {
+                clearCancellationToken()
+                cancellationActionError.value = '這個取消連結已失效、已處理，或不屬於目前登入的帳號。'
+            } else {
+                cancellationActionError.value = error.message
+                actionRetryable.value = true
+            }
+        } finally {
+            resolvingCancellationLink = false
+        }
+    }
+
+    async function confirmLinkedCancellation() {
+        if (!cancellationAction.value || actionSubmitting.value) return
+        actionSubmitting.value = true
+        cancellationActionError.value = ''
+        try {
+            await request(cancellationAction.value.path, { method: cancellationAction.value.method })
+            clearCancellationToken()
+            cancellationAction.value = null
+            message.value = { ok: true, text: '已依通知連結取消報名。' }
+            await load()
+        } catch (error) {
+            if (error.code === 'INVALID_TOKEN' || error.code === 'AUTH_REQUIRED') {
+                await router.replace({ path: '/login', query: { redirect: `/events/${route.params.id}` } })
+            } else {
+                // Rechecking the token will switch to the application flow if the cutoff passed.
+                cancellationAction.value = null
+                cancellationActionError.value = error.message
+                await resolveCancellationLink()
+            }
+        } finally {
+            actionSubmitting.value = false
+        }
+    }
+
+    async function dismissLinkedCancellation() {
+        clearCancellationToken()
+        cancellationAction.value = null
+        await router.replace(`/events/${route.params.id}`)
+    }
 
     async function copyLink() {
         try {
@@ -132,6 +271,7 @@
     }
 
     async function load() {
+        loading.value = true
         loadError.value = null
         try {
             event.value = await request(`/events/${route.params.id}`, { guestRetry: true })
@@ -185,14 +325,21 @@
         }
     }
 
-    watch(() => route.params.id, () => {
+    async function initialize() {
+        captureCancellationToken()
         loading.value = true
         message.value = null
-        load()
-    }, { immediate: true })
+        await load()
+        await resolveCancellationLink()
+    }
+
+    watch(() => route.params.id, initialize, { immediate: true })
 
     // Re-read personal status when the user logs in or out in another part of the page.
-    watch(isLoggedIn, load)
+    watch(isLoggedIn, async (loggedIn) => {
+        await load()
+        if (loggedIn) await resolveCancellationLink()
+    })
 </script>
 
 <style scoped>
@@ -261,6 +408,25 @@
     }
     .cancel {
         margin-top: 12px;
+    }
+    .cancel-landing {
+        max-width: 700px;
+        margin: 24px auto;
+    }
+    .cancel-landing h1 {
+        margin-top: 0;
+    }
+    .cancel-event-name {
+        margin: 0;
+    }
+    .landing-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    .retry-action {
+        margin-left: 8px;
     }
     .share {
         margin-top: 24px;

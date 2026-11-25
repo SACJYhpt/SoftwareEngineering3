@@ -119,6 +119,7 @@ class EventResponse(BaseModel):
     waitlist_position: int | None = None
     cancellation_request: dict | None = None
     can_cancel_registration: bool = False
+    direct_cancel_deadline: datetime | None = None
     can_request_cancellation: bool = False
 
 
