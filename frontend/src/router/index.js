@@ -12,6 +12,7 @@ import Faq from '../views/Faq.vue'
 import MyEvents from '../views/MyEvents.vue'
 import CreateEvent from '../views/CreateEvent.vue'
 import ManageEvents from '../views/ManageEvents.vue'
+import ManageCancellationRequests from '../views/ManageCancellationRequests.vue'
 import EditEvent from '../views/EditEvent.vue'
 import Roster from '../views/Roster.vue'
 import OrganizerTerms from '../views/OrganizerTerms.vue'
@@ -33,6 +34,7 @@ const routes = [
     { path: '/events/new', component: CreateEvent, meta: { requiresManager: true } }, // 建立活動 (ER-US-C01)
     { path: '/manage', component: ManageEvents, meta: { requiresManager: true } }, // 單位活動 (ER-US-C15、F07、B11)
     { path: '/manage/events/:id(\\d+)/edit', component: EditEvent, meta: { requiresManager: true } }, // 修改活動 (ER-US-F01)
+    { path: '/manage/events/:id(\\d+)/cancellation-requests', component: ManageCancellationRequests, meta: { requiresManager: true } }, // 取消申請審核 (ER-US-E02)
     { path: '/manage/events/:id(\\d+)/registrations', component: Roster, meta: { requiresManager: true } }, // 名單 (ER-US-G01)
     { path: '/admin', component: Admin, meta: { requiresAdmin: true } }, // 系統管理 (ER-US-I01、I02、I05、I06、I12、J02、J03)
     { path: '/:pathMatch(.*)*', redirect: '/' },
