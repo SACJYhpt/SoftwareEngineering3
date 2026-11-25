@@ -15,6 +15,7 @@
 
             <div v-if="pendingRequest" class="alert alert-info" role="status">
                 這筆報名已有取消申請審核中，預計於 {{ formatDateTime(pendingRequest.auto_approve_at) }} 自動核准。
+                申請核准前，報名仍有效，你仍須履行參加活動的義務。
             </div>
             <div v-else-if="!event.can_request_cancellation" class="alert alert-info" role="status">
                 目前不符合提出取消申請的條件。請回活動詳情確認最新報名狀態。
@@ -23,7 +24,7 @@
             <form v-else novalidate @submit.prevent="submit">
                 <p class="alert alert-info">
                     申請送出後，需等待管理者處理；等待核准期間其他活動可能額滿。若未在期限前處理，系統將於
-                    送出後 72 小時或活動開始時間（兩者較早者）自動核准並取消這筆報名。
+                    送出後 72 小時或活動開始時間（兩者較早者）自動核准並取消這筆報名。核准前，這筆報名仍有效，你仍須履行參加活動的義務。
                 </p>
 
                 <div class="field" :class="{ invalid: reasonError }">
