@@ -101,6 +101,20 @@
                 <div v-if="message" :class="['alert', message.ok ? 'alert-ok' : 'alert-error']" role="status">
                     {{ message.text }}
                 </div>
+                <!-- 報名資格不符提示 (ER-US-D03) -->
+                <div v-if="eligibilityError" class="alert alert-error eligibility-error" role="alert">
+                    <strong>不符合報名資格</strong>
+                    <ul v-if="eligibilityError.conditions.length" class="eligibility-conditions">
+                        <li v-for="condition in eligibilityError.conditions" :key="condition">{{ condition }}</li>
+                    </ul>
+                    <p class="eligibility-summary">{{ eligibilityError.message }}</p>
+                    <p v-if="event.eligibility_description && event.eligibility_description !== '不限'" class="eligibility-requirement">
+                        本活動資格限制：{{ event.eligibility_description }}
+                    </p>
+                    <p class="eligibility-profile-link">
+                        <router-link to="/me/profile">前往更新個人資料</router-link>
+                    </p>
+                </div>
             </aside>
         </div>
     </main>
@@ -124,6 +138,7 @@
     const cancellationActionError = ref('')
     const actionRetryable = ref(false)
     const message = ref(null)
+    const eligibilityError = ref(null)
     const shareMessage = ref('')
     const CANCEL_ACTION_TOKEN_KEY = 'ntou-cancellation-action-token'
     let resolvingCancellationLink = false
@@ -261,6 +276,7 @@
         if (!window.confirm('確定要取消報名嗎？取消後名額會立即釋出。')) return
         submitting.value = true
         message.value = null
+        eligibilityError.value = null
         try {
             await request(`/events/${route.params.id}/registrations/me`, { method: 'DELETE' })
             message.value = { ok: true, text: '已取消報名。報名截止前仍可再次報名。' }
@@ -312,12 +328,20 @@
         }
         submitting.value = true
         message.value = null
+        eligibilityError.value = null
         try {
             const result = await request(`/events/${route.params.id}/registrations`, { method: 'POST' })
             message.value = { ok: true, text: result.already_registered ? '你已經報名過這個活動。' : '報名成功！' }
         } catch (e) {
             if (e.code === 'AUTH_REQUIRED') {
                 router.push({ path: '/login', query: { redirect: route.fullPath } })
+                return
+            }
+            if (e.code === 'ELIGIBILITY_MISMATCH') {
+                eligibilityError.value = {
+                    message: e.message,
+                    conditions: Array.isArray(e.detail?.conditions) ? e.detail.conditions : [],
+                }
                 return
             }
             message.value = { ok: false, text: `報名失敗：${e.message}` }
@@ -331,6 +355,7 @@
         captureCancellationToken()
         loading.value = true
         message.value = null
+        eligibilityError.value = null
         await load()
         await resolveCancellationLink()
     }
@@ -449,5 +474,18 @@
     }
     .qr {
         margin-top: 10px;
+    }
+    .eligibility-error {
+        margin-top: 12px;
+    }
+    .eligibility-conditions {
+        margin: 6px 0;
+        padding-left: 20px;
+    }
+    .eligibility-summary,
+    .eligibility-requirement,
+    .eligibility-profile-link {
+        margin: 6px 0 0;
+        font-size: 0.92rem;
     }
 </style>
