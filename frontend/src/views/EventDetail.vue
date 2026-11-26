@@ -115,6 +115,26 @@
                         <router-link to="/me/profile">前往更新個人資料</router-link>
                     </p>
                 </div>
+                <!-- 時間衝突提醒 (ER-US-D04、D11、E11) -->
+                <div v-if="conflictState" class="alert alert-error conflict-error" role="alert">
+                    <strong>{{ conflictState.code === 'WAITLIST_CONFLICT' ? '與候補中的活動時間衝突' : '與已報名的活動時間衝突' }}</strong>
+                    <p class="conflict-summary">{{ conflictState.message }}</p>
+                    <ul v-if="conflictState.conflicts.length" class="conflict-list">
+                        <li v-for="item in conflictState.conflicts" :key="item.event_id" class="conflict-item">
+                            <router-link :to="`/events/${item.event_id}`" class="conflict-name">{{ item.name }}</router-link>
+                            <div class="conflict-meta">{{ formatRange(item.start_time, item.end_time) }}</div>
+                            <div class="conflict-status">{{ conflictStatusLabel(item) }}</div>
+                            <router-link v-if="isConflictClosed(item)" :to="`/events/${item.event_id}/cancellation-request`"
+                                class="btn btn-outline btn-small conflict-cancel-link">
+                                申請取消
+                            </router-link>
+                        </li>
+                    </ul>
+                    <button v-if="canSwitchConflicts" class="btn btn-large conflict-switch-btn" type="button"
+                        :disabled="switching || submitting" @click="onSwitchRegistration">
+                        {{ switching ? '改報名處理中…' : '取消原活動並改報名' }}
+                    </button>
+                </div>
             </aside>
         </div>
     </main>
@@ -133,12 +153,14 @@
     const loading = ref(true)
     const loadError = ref(null)
     const submitting = ref(false)
+    const switching = ref(false)
     const actionSubmitting = ref(false)
     const cancellationAction = ref(null)
     const cancellationActionError = ref('')
     const actionRetryable = ref(false)
     const message = ref(null)
     const eligibilityError = ref(null)
+    const conflictState = ref(null)
     const shareMessage = ref('')
     const CANCEL_ACTION_TOKEN_KEY = 'ntou-cancellation-action-token'
     let resolvingCancellationLink = false
@@ -147,6 +169,26 @@
     const cancellationRequestPath = computed(() => `/events/${route.params.id}/cancellation-request`)
     const hasPendingCancellation = computed(() => event.value?.cancellation_request?.status === 'pending')
     const canManage = computed(() => event.value && managedUnits.value.some((unit) => unit.id === event.value.unit_id))
+
+    function isConflictClosed(item) {
+        return Boolean(item?.registration_closed || item?.action === 'request_cancellation')
+    }
+
+    function conflictStatusLabel(item) {
+        const base = item.status === 'waitlisted'
+            ? (item.waitlist_position ? `候補第 ${item.waitlist_position} 位` : '候補中')
+            : '已報名'
+        return isConflictClosed(item) ? `${base}（已截止）` : base
+    }
+
+    const canSwitchConflicts = computed(() => {
+        const list = conflictState.value?.conflicts || []
+        if (list.length === 0) return false
+        if (list.some((item) => isConflictClosed(item))) return false
+        return new Set(list.map((item) => item.status)).size === 1
+    })
+
+    const switchSourceStatus = computed(() => (canSwitchConflicts.value ? conflictState.value.conflicts[0].status : null))
 
     function captureCancellationToken() {
         if (!window.location.hash) return
@@ -277,6 +319,7 @@
         submitting.value = true
         message.value = null
         eligibilityError.value = null
+        conflictState.value = null
         try {
             await request(`/events/${route.params.id}/registrations/me`, { method: 'DELETE' })
             message.value = { ok: true, text: '已取消報名。報名截止前仍可再次報名。' }
@@ -329,6 +372,7 @@
         submitting.value = true
         message.value = null
         eligibilityError.value = null
+        conflictState.value = null
         try {
             const result = await request(`/events/${route.params.id}/registrations`, { method: 'POST' })
             message.value = { ok: true, text: result.already_registered ? '你已經報名過這個活動。' : '報名成功！' }
@@ -344,9 +388,57 @@
                 }
                 return
             }
+            if (e.code === 'TIME_CONFLICT' || e.code === 'WAITLIST_CONFLICT') {
+                conflictState.value = {
+                    code: e.code,
+                    message: e.message,
+                    conflicts: Array.isArray(e.detail?.conflicts) ? e.detail.conflicts : [],
+                }
+                return
+            }
             message.value = { ok: false, text: `報名失敗：${e.message}` }
         } finally {
             submitting.value = false
+            await load()
+        }
+    }
+
+    async function onSwitchRegistration() {
+        if (!canSwitchConflicts.value || switching.value) return
+        const conflicts = conflictState.value.conflicts
+        const names = conflicts.map((item) => `「${item.name}」`).join('、')
+        const actionLabel = switchSourceStatus.value === 'waitlisted' ? '放棄候補' : '取消原報名'
+        if (!window.confirm(`確定要${actionLabel}${names}，並改報名「${event.value?.name || '此活動'}」嗎？若新活動無法報名，原活動將保留。`)) {
+            return
+        }
+        switching.value = true
+        message.value = null
+        try {
+            const result = await request(`/events/${route.params.id}/registrations/switch`, {
+                method: 'POST',
+                body: {
+                    source_event_ids: conflicts.map((item) => Number(item.event_id)),
+                    source_status: switchSourceStatus.value,
+                    confirmed: true,
+                },
+            })
+            conflictState.value = null
+            message.value = { ok: true, text: result?.message || '已取消原活動並完成改報名！' }
+        } catch (e) {
+            if (e.code === 'AUTH_REQUIRED') {
+                router.push({ path: '/login', query: { redirect: route.fullPath } })
+                return
+            }
+            if (e.code === 'SOURCE_STATUS_CHANGED' && Array.isArray(e.detail?.conflicts)) {
+                conflictState.value = {
+                    code: e.detail.conflicts.some((item) => item.status === 'registered') ? 'TIME_CONFLICT' : 'WAITLIST_CONFLICT',
+                    message: e.message,
+                    conflicts: e.detail.conflicts,
+                }
+            }
+            message.value = { ok: false, text: `改報名失敗：${e.message}` }
+        } finally {
+            switching.value = false
             await load()
         }
     }
@@ -356,6 +448,7 @@
         loading.value = true
         message.value = null
         eligibilityError.value = null
+        conflictState.value = null
         await load()
         await resolveCancellationLink()
     }
@@ -487,5 +580,38 @@
     .eligibility-profile-link {
         margin: 6px 0 0;
         font-size: 0.92rem;
+    }
+    .conflict-error {
+        margin-top: 12px;
+    }
+    .conflict-summary {
+        margin: 6px 0 0;
+        font-size: 0.92rem;
+    }
+    .conflict-list {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0 0;
+        display: grid;
+        gap: 10px;
+    }
+    .conflict-item {
+        padding-top: 8px;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    .conflict-name {
+        font-weight: 700;
+    }
+    .conflict-meta,
+    .conflict-status {
+        font-size: 0.88rem;
+        margin-top: 2px;
+    }
+    .conflict-cancel-link {
+        margin-top: 6px;
+        display: inline-block;
+    }
+    .conflict-switch-btn {
+        margin-top: 12px;
     }
 </style>
