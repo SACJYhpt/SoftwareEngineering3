@@ -73,6 +73,26 @@
             <span class="hint">{{ editing ? '留空表示不限名額；不可低於目前已報名人數。' : '留空表示不限名額。' }}</span>
             <span v-if="errors.capacity" class="error">{{ errors.capacity }}</span>
         </div>
+        <!-- 候補設定 (ER-US-C07)：不限名額時無法開啟；開啟後預設為名額上限的一半（無條件進位） -->
+        <div :class="['field', { invalid: errors.waitlist_enabled }]">
+            <label class="checkbox-row" for="waitlist-enabled">
+                <input id="waitlist-enabled" v-model="form.waitlist_enabled" type="checkbox" :disabled="!hasValidCapacity" />
+                <span>開放候補</span>
+            </label>
+            <span class="hint">
+                {{ hasValidCapacity ? '額滿後開放候補，有人取消時依先到先補自動遞補，不需本人確認。' : '不限名額的活動不會額滿，無法開啟候補。' }}
+            </span>
+            <span v-if="errors.waitlist_enabled" class="error">{{ errors.waitlist_enabled }}</span>
+        </div>
+        <div v-if="form.waitlist_enabled" :class="['field', { invalid: errors.waitlist_capacity }]">
+            <label for="waitlist-capacity" class="required">候補人數上限</label>
+            <input id="waitlist-capacity" v-model="form.waitlist_capacity" type="number" min="1" step="1" inputmode="numeric"
+                @input="onWaitlistCapacityInput" />
+            <span class="hint">
+                {{ editing ? '預設為名額上限的一半（無條件進位）；不可低於目前候補人數。' : '預設為名額上限的一半（無條件進位），可調整為其他正整數。' }}
+            </span>
+            <span v-if="errors.waitlist_capacity" class="error">{{ errors.waitlist_capacity }}</span>
+        </div>
         <div :class="['field', { invalid: errors.contact_information }]">
             <label for="contact" class="required">聯絡方式</label>
             <input id="contact" v-model="form.contact_information" maxlength="255" placeholder="例如：活動窗口 Email 或分機" />
@@ -86,7 +106,8 @@
 </template>
 
 <script setup>
-    import { computed } from 'vue'
+    import { computed, ref, watch } from 'vue'
+    import { defaultWaitlistCapacity, isPositiveInt } from '../eventForm'
 
     const props = defineProps({
         form: { type: Object, required: true },
@@ -95,6 +116,49 @@
         types: { type: Array, required: true },
         unitLocked: { type: Boolean, default: false },
         editing: { type: Boolean, default: false },
+    })
+
+    const hasValidCapacity = computed(() => isPositiveInt(props.form.capacity))
+    const waitlistCapacityCustomized = ref(false)
+
+    function onWaitlistCapacityInput() {
+        waitlistCapacityCustomized.value = String(props.form.waitlist_capacity).trim() !== ''
+    }
+
+    watch(() => props.form.capacity, (newCapacity, oldCapacity) => {
+        if (!isPositiveInt(newCapacity)) {
+            props.form.waitlist_enabled = false
+            props.form.waitlist_capacity = ''
+            waitlistCapacityCustomized.value = false
+            props.errors.waitlist_enabled = ''
+            props.errors.waitlist_capacity = ''
+            return
+        }
+        if (props.form.waitlist_enabled && !waitlistCapacityCustomized.value) {
+            const current = String(props.form.waitlist_capacity).trim()
+            if (current === '' || current === defaultWaitlistCapacity(oldCapacity)) {
+                props.form.waitlist_capacity = defaultWaitlistCapacity(newCapacity)
+            }
+        }
+    })
+
+    watch(() => props.form.waitlist_enabled, (enabled) => {
+        if (!enabled) {
+            props.form.waitlist_capacity = ''
+            waitlistCapacityCustomized.value = false
+            props.errors.waitlist_enabled = ''
+            props.errors.waitlist_capacity = ''
+            return
+        }
+        if (!hasValidCapacity.value) {
+            props.form.waitlist_enabled = false
+            props.form.waitlist_capacity = ''
+            return
+        }
+        if (String(props.form.waitlist_capacity).trim() === '') {
+            props.form.waitlist_capacity = defaultWaitlistCapacity(props.form.capacity)
+            waitlistCapacityCustomized.value = false
+        }
     })
 
     // A disabled type stays selectable on events that already use it.
@@ -124,5 +188,16 @@
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
         gap: 0 16px;
+    }
+    .checkbox-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .checkbox-row input {
+        width: auto;
+        margin: 0;
     }
 </style>
