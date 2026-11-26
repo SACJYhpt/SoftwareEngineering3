@@ -4,12 +4,13 @@
         <div class="nav-links">
             <router-link to="/faq" class="nav-link">常見問題</router-link>
             <router-link v-if="isLoggedIn" to="/me/events" class="nav-link">我的活動</router-link>
+            <router-link v-if="isLoggedIn" to="/me/profile" class="nav-link">個人資料</router-link>
             <router-link v-if="managedUnits.length" to="/manage" class="nav-link">活動管理</router-link>
             <router-link v-if="isAdmin" to="/admin" class="nav-link">系統管理</router-link>
         </div>
         <div class="nav-actions">
             <template v-if="isLoggedIn">
-                <span class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</span>
+                <router-link to="/me/profile" class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</router-link>
                 <button class="btn btn-outline" :disabled="busy" @click="onLogout">登出</button>
             </template>
             <template v-else>
@@ -91,6 +92,10 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         color: var(--muted);
+        text-decoration: none;
+    }
+    .nav-user:hover {
+        color: var(--brand);
     }
     /* Small screens: brand and buttons on the first row, page links on their own row below. */
     @media (max-width: 640px) {

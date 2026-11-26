@@ -10,6 +10,7 @@ import ForgotPassword from '../views/ForgotPassword.vue'
 import ResetPassword from '../views/ResetPassword.vue'
 import Faq from '../views/Faq.vue'
 import MyEvents from '../views/MyEvents.vue'
+import Profile from '../views/Profile.vue'
 import CreateEvent from '../views/CreateEvent.vue'
 import ManageEvents from '../views/ManageEvents.vue'
 import ManageCancellationRequests from '../views/ManageCancellationRequests.vue'
@@ -30,6 +31,7 @@ const routes = [
     { path: '/reset-password', component: ResetPassword }, // 重設密碼 (ER-US-A08)
     { path: '/faq', component: Faq }, // 常見問題 (ER-US-B17)
     { path: '/me/events', component: MyEvents, meta: { requiresAuth: true } }, // 我的活動、歷史 (ER-US-E01、H03)
+    { path: '/me/profile', component: Profile, meta: { requiresAuth: true } }, // 個人資料：修改系所與年級 (ER-US-A10)
     { path: '/organizer-terms', component: OrganizerTerms, meta: { requiresManager: true } }, // 主辦規範 (ER-US-I16)
     { path: '/events/new', component: CreateEvent, meta: { requiresManager: true } }, // 建立活動 (ER-US-C01)
     { path: '/manage', component: ManageEvents, meta: { requiresManager: true } }, // 單位活動 (ER-US-C15、F07、B11)
