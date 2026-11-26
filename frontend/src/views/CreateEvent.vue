@@ -9,7 +9,8 @@
         <form v-show="!needsTerms" class="panel" novalidate @submit.prevent="onSubmit">
             <h1>建立活動</h1>
             <p class="muted">標示 <span class="required"></span> 的欄位為必填。時間皆為台灣時間。</p>
-            <EventForm :form="form" :errors="errors" :units="managedUnits" :types="types" :unit-locked="managedUnits.length === 1" />
+            <EventForm :form="form" :errors="errors" :units="managedUnits" :types="types"
+                :departments="departments" :offices="offices" :unit-locked="managedUnits.length === 1" />
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '建立中…' : '建立並發布活動' }}</button>
         </form>
@@ -27,6 +28,8 @@
 
     const router = useRouter()
     const types = ref([])
+    const departments = ref([])
+    const offices = ref([])
     const submitting = ref(false)
     const formError = ref('')
     const needsTerms = ref(false)
@@ -63,9 +66,16 @@
 
     onMounted(async () => {
         try {
-            types.value = await request('/event-types')
+            const [typeList, deptList, officeList] = await Promise.all([
+                request('/event-types'),
+                request('/units?kind=department'),
+                request('/units?kind=office'),
+            ])
+            types.value = typeList
+            departments.value = deptList
+            offices.value = officeList
         } catch (e) {
-            formError.value = '無法載入活動類型：' + e.message
+            formError.value = '無法載入表單選項：' + e.message
         }
     })
 </script>

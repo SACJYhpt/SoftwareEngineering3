@@ -103,17 +103,72 @@
             <textarea id="notes" v-model="form.notes"></textarea>
         </div>
     </fieldset>
+
+    <!-- 報名資格限制 (ER-US-C08)：三種條件皆可複選，未設定時所有一般使用者皆可報名 -->
+    <fieldset>
+        <legend>報名資格限制</legend>
+        <p class="hint eligibility-hint">選填。未勾選任何條件表示不限；三種條件可複選，每種條件可選多個值。</p>
+
+        <div :class="['field', { invalid: errors.eligibility_identities }]">
+            <span class="group-label">身分別</span>
+            <div class="checkbox-grid">
+                <label v-for="(label, key) in IDENTITY_LABELS" :key="key" class="checkbox-option">
+                    <input v-model="form.eligibility_identities" type="checkbox" :value="key" />
+                    <span>{{ label }}</span>
+                </label>
+            </div>
+            <span v-if="errors.eligibility_identities" class="error">{{ errors.eligibility_identities }}</span>
+        </div>
+
+        <div :class="['field', { invalid: errors.eligibility_department_ids }]">
+            <span class="group-label">系所／行政單位</span>
+            <div v-if="departments.length" class="unit-group">
+                <span class="subgroup-label">系所</span>
+                <div class="checkbox-grid">
+                    <label v-for="unit in departments" :key="unit.id" class="checkbox-option">
+                        <input v-model="form.eligibility_department_ids" type="checkbox" :value="unit.id" />
+                        <span>{{ unit.name }}</span>
+                    </label>
+                </div>
+            </div>
+            <div v-if="offices.length" class="unit-group">
+                <span class="subgroup-label">行政單位</span>
+                <div class="checkbox-grid">
+                    <label v-for="unit in offices" :key="unit.id" class="checkbox-option">
+                        <input v-model="form.eligibility_department_ids" type="checkbox" :value="unit.id" />
+                        <span>{{ unit.name }}</span>
+                    </label>
+                </div>
+            </div>
+            <span v-if="!departments.length && !offices.length" class="hint">尚無可選的系所或行政單位。</span>
+            <span v-if="errors.eligibility_department_ids" class="error">{{ errors.eligibility_department_ids }}</span>
+        </div>
+
+        <div :class="['field', { invalid: errors.eligibility_grades }]">
+            <span class="group-label">年級</span>
+            <div class="checkbox-grid">
+                <label v-for="grade in GRADES" :key="grade.value" class="checkbox-option">
+                    <input v-model="form.eligibility_grades" type="checkbox" :value="grade.value" />
+                    <span>{{ grade.label }}</span>
+                </label>
+            </div>
+            <span v-if="errors.eligibility_grades" class="error">{{ errors.eligibility_grades }}</span>
+        </div>
+    </fieldset>
 </template>
 
 <script setup>
     import { computed, ref, watch } from 'vue'
     import { defaultWaitlistCapacity, isPositiveInt } from '../eventForm'
+    import { GRADES, IDENTITY_LABELS } from '../format'
 
     const props = defineProps({
         form: { type: Object, required: true },
         errors: { type: Object, required: true },
         units: { type: Array, required: true },
         types: { type: Array, required: true },
+        departments: { type: Array, default: () => [] },
+        offices: { type: Array, default: () => [] },
         unitLocked: { type: Boolean, default: false },
         editing: { type: Boolean, default: false },
     })
@@ -197,6 +252,39 @@
         cursor: pointer;
     }
     .checkbox-row input {
+        width: auto;
+        margin: 0;
+    }
+    .eligibility-hint {
+        margin: 0 0 12px;
+    }
+    .group-label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .unit-group {
+        margin-bottom: 10px;
+    }
+    .subgroup-label {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-bottom: 4px;
+    }
+    .checkbox-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 6px 12px;
+    }
+    .checkbox-option {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 400;
+        cursor: pointer;
+    }
+    .checkbox-option input {
         width: auto;
         margin: 0;
     }

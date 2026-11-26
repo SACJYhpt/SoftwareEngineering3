@@ -10,7 +10,8 @@
         <form v-else class="panel" novalidate @submit.prevent="onSubmit">
             <h1>修改活動</h1>
             <p class="alert alert-info">修改活動時間、地點或注意事項後，系統會寄信通知所有已報名者，信中列出修改前後的內容。只修改其他欄位不會寄信。</p>
-            <EventForm :form="form" :errors="errors" :units="units" :types="types" unit-locked editing />
+            <EventForm :form="form" :errors="errors" :units="units" :types="types"
+                :departments="departments" :offices="offices" unit-locked editing />
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '儲存中…' : '儲存修改' }}</button>
         </form>
@@ -30,6 +31,8 @@
     const errors = reactive(Object.fromEntries(EVENT_FIELDS.map((field) => [field, ''])))
     const units = ref([])
     const types = ref([])
+    const departments = ref([])
+    const offices = ref([])
     const loading = ref(true)
     const loadError = ref('')
     const formError = ref('')
@@ -63,15 +66,22 @@
 
     onMounted(async () => {
         try {
-            const [event, typeList] = await Promise.all([request(`/events/${route.params.id}`), request('/event-types')])
+            const [event, typeList, deptList, officeList] = await Promise.all([
+                request(`/events/${route.params.id}`),
+                request('/event-types'),
+                request('/units?kind=department'),
+                request('/units?kind=office'),
+            ])
             if (['已結束', '已取消'].includes(event.status)) {
                 loadError.value = `活動${event.status}，不能再修改。`
                 return
             }
             original = eventToForm(event)
-            Object.assign(form, original)
+            Object.assign(form, eventToForm(event))
             units.value = [event.unit]
             types.value = typeList
+            departments.value = deptList
+            offices.value = officeList
         } catch (e) {
             loadError.value = e.message
         } finally {

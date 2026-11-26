@@ -3,9 +3,28 @@ import { isoToTaipeiInput, taipeiInputToDate, taipeiInputToIso } from './format'
 
 export const EVENT_FIELDS = ['unit_id', 'name', 'type', 'description', 'start_time', 'end_time', 'location',
     'registration_start', 'registration_deadline', 'capacity', 'waitlist_enabled', 'waitlist_capacity',
+    'eligibility_identities', 'eligibility_department_ids', 'eligibility_grades',
     'contact_information', 'notes']
-const REQUIRED = EVENT_FIELDS.filter((field) => !['capacity', 'waitlist_enabled', 'waitlist_capacity', 'notes'].includes(field))
+const REQUIRED = EVENT_FIELDS.filter((field) => ![
+    'capacity', 'waitlist_enabled', 'waitlist_capacity',
+    'eligibility_identities', 'eligibility_department_ids', 'eligibility_grades',
+    'notes',
+].includes(field))
 const TIME_FIELDS = ['start_time', 'end_time', 'registration_start', 'registration_deadline']
+const ELIGIBILITY_INT_FIELDS = ['eligibility_department_ids', 'eligibility_grades']
+
+function normalizeIdentities(list) {
+    return Array.from(new Set((Array.isArray(list) ? list : []).map((v) => String(v)))).sort()
+}
+
+function normalizeIntList(list) {
+    return Array.from(new Set((Array.isArray(list) ? list : []).map(Number).filter((n) => Number.isInteger(n) && n > 0)))
+        .sort((a, b) => a - b)
+}
+
+function sameList(a, b) {
+    return a.length === b.length && a.every((item, index) => item === b[index])
+}
 
 export function isPositiveInt(value) {
     return value !== '' && value !== null && value !== undefined && /^[1-9]\d*$/.test(String(value).trim())
@@ -21,6 +40,7 @@ export function emptyEventForm(unitId = '') {
     return {
         unit_id: unitId, name: '', type: '', description: '', start_time: '', end_time: '', location: '',
         registration_start: '', registration_deadline: '', capacity: '', waitlist_enabled: false, waitlist_capacity: '',
+        eligibility_identities: [], eligibility_department_ids: [], eligibility_grades: [],
         contact_information: '', notes: '',
     }
 }
@@ -32,6 +52,8 @@ export function eventToForm(event) {
         if (field === 'unit_id') continue
         const value = event[field]
         if (field === 'waitlist_enabled') form[field] = Boolean(value)
+        else if (field === 'eligibility_identities') form[field] = normalizeIdentities(value)
+        else if (ELIGIBILITY_INT_FIELDS.includes(field)) form[field] = normalizeIntList(value)
         else if (TIME_FIELDS.includes(field)) form[field] = isoToTaipeiInput(value)
         else form[field] = value == null ? '' : String(value)
     }
@@ -91,6 +113,18 @@ export function eventFormToPayload(form, original = null) {
             payload.waitlist_capacity = normalizedWaitlistCap
             continue
         }
+        if (field === 'eligibility_identities') {
+            const next = normalizeIdentities(form[field])
+            if (original && sameList(next, normalizeIdentities(original[field]))) continue
+            payload.eligibility_identities = next
+            continue
+        }
+        if (ELIGIBILITY_INT_FIELDS.includes(field)) {
+            const next = normalizeIntList(form[field])
+            if (original && sameList(next, normalizeIntList(original[field]))) continue
+            payload[field] = next
+            continue
+        }
         if (original && String(form[field]).trim() === String(original[field]).trim()) continue
         const value = form[field]
         if (field === 'unit_id') payload[field] = Number(value)
@@ -106,4 +140,5 @@ export function eventFormToPayload(form, original = null) {
 export const EVENT_CODE_FIELDS = {
     EVENT_START_IN_PAST: 'start_time', UNIT_FORBIDDEN: 'unit_id', UNIT_NOT_FOUND: 'unit_id', UNIT_INACTIVE: 'unit_id',
     EVENT_TYPE_INVALID: 'type', CAPACITY_BELOW_REGISTRATIONS: 'capacity', WAITLIST_BELOW_CURRENT: 'waitlist_capacity',
+    ELIGIBILITY_UNIT_INVALID: 'eligibility_department_ids',
 }

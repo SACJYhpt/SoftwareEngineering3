@@ -37,6 +37,8 @@ export function isoToTaipeiInput(iso) {
 export const IDENTITY_LABELS = { student: '學生', teacher: '教師', staff: '行政人員' }
 export const ROLE_LABELS = { member: '一般使用者', manager: '活動管理者', admin: '系統管理員' }
 export const UNIT_KIND_LABELS = { department: '系所', office: '行政單位', club: '社團' }
+export const GRADES = [1, 2, 3, 4].map((n) => ({ value: n, label: `大學部 ${n} 年級` }))
+  .concat([5, 6, 7].map((n) => ({ value: n, label: `研究所 ${n - 4} 年級` })))
 
 // Token links arrive as /verify-email#token=...; read once, then drop it from the address bar.
 export function takeTokenFromHash() {

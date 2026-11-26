@@ -45,6 +45,8 @@
                     <dd>{{ formatRange(event.registration_start, event.registration_deadline) }}</dd>
                     <dt>名額</dt>
                     <dd>{{ capacityText(event) }}</dd>
+                    <dt>報名資格</dt>
+                    <dd>{{ event.eligibility_description || '不限' }}</dd>
                 </dl>
                 <div v-if="event.status === '已取消' && event.cancellation_reason" class="alert alert-error">
                     活動已取消。取消原因：{{ event.cancellation_reason }}
