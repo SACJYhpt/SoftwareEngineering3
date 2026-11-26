@@ -14,6 +14,9 @@
             <div v-if="formError" class="alert alert-error" role="alert">{{ formError }}</div>
             <button class="btn btn-large" type="submit" :disabled="submitting">{{ submitting ? '建立中…' : '建立並發布活動' }}</button>
         </form>
+
+        <OverlapWarningDialog :open="showOverlapDialog" :conflicts="overlapConflicts" :submitting="submitting"
+            @cancel="onCancelOverlap" @confirm="onConfirmOverlap" />
     </main>
 </template>
 
@@ -25,6 +28,7 @@
     import { EVENT_CODE_FIELDS, EVENT_FIELDS, emptyEventForm, eventFormToPayload, validateEventForm } from '../eventForm'
     import EventForm from '../components/EventForm.vue'
     import OrganizerTermsPanel from '../components/OrganizerTermsPanel.vue'
+    import OverlapWarningDialog from '../components/OverlapWarningDialog.vue'
 
     const router = useRouter()
     const types = ref([])
@@ -33,30 +37,55 @@
     const submitting = ref(false)
     const formError = ref('')
     const needsTerms = ref(false)
+    const showOverlapDialog = ref(false)
+    const overlapConflicts = ref([])
     const form = reactive(emptyEventForm(managedUnits.value.length === 1 ? managedUnits.value[0].id : ''))
     const errors = reactive(Object.fromEntries(EVENT_FIELDS.map((field) => [field, ''])))
 
-    async function onSubmit() {
+    async function submitEvent(confirmOverlap = false) {
         formError.value = ''
-        if (!validateEventForm(form, errors)) {
+        if (!confirmOverlap && !validateEventForm(form, errors)) {
             formError.value = '請修正標示的欄位後再送出'
             return
         }
         submitting.value = true
         try {
-            const event = await request('/events', { method: 'POST', body: eventFormToPayload(form) })
+            const body = eventFormToPayload(form)
+            if (confirmOverlap) body.confirm_overlap = true
+            const event = await request('/events', { method: 'POST', body })
+            showOverlapDialog.value = false
+            overlapConflicts.value = []
             router.push(`/events/${event.id}`)
         } catch (e) {
             if (e.code === 'ORGANIZER_TERMS_REQUIRED') {
                 needsTerms.value = true
                 return
             }
+            if (e.code === 'SCHEDULE_OVERLAP_CONFIRMATION_REQUIRED') {
+                overlapConflicts.value = Array.isArray(e.detail?.conflicts) ? e.detail.conflicts : []
+                showOverlapDialog.value = true
+                return
+            }
+            showOverlapDialog.value = false
             Object.assign(errors, e.fieldErrors || {})
             if (EVENT_CODE_FIELDS[e.code]) errors[EVENT_CODE_FIELDS[e.code]] = e.message
             formError.value = e.message
         } finally {
             submitting.value = false
         }
+    }
+
+    function onSubmit() {
+        return submitEvent(false)
+    }
+
+    function onCancelOverlap() {
+        showOverlapDialog.value = false
+        overlapConflicts.value = []
+    }
+
+    function onConfirmOverlap() {
+        return submitEvent(true)
     }
 
     async function onAcknowledged() {
