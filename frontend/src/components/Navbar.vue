@@ -4,6 +4,7 @@
         <div class="nav-links">
             <router-link to="/faq" class="nav-link">常見問題</router-link>
             <router-link v-if="isLoggedIn" to="/me/events" class="nav-link">我的活動</router-link>
+            <router-link v-if="isLoggedIn" to="/me/profile" class="nav-link">個人資料</router-link>
             <router-link v-if="managedUnits.length" to="/manage" class="nav-link">活動管理</router-link>
             <router-link v-if="isAdmin" to="/admin" class="nav-link">系統管理</router-link>
         </div>

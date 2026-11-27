@@ -24,6 +24,10 @@ const VALIDATION_MESSAGES = [
   ['invalid email', 'email', '信箱格式不正確'],
   ['name and student grade are required', 'grade', '請填寫姓名；學生須選擇年級'],
   ['reason cannot be blank', 'reason', '請填寫原因'],
+  ['unlimited capacity cannot enable waitlist', 'waitlist_enabled', '不限名額的活動無法開啟候補'],
+  ['waitlist_capacity requires waitlist_enabled', 'waitlist_capacity', '須先開啟候補才能設定候補上限'],
+  ['eligibility_department_ids must be positive integers', 'eligibility_department_ids', '系所／行政單位資格設定不正確'],
+  ['eligibility_grades must be positive integers', 'eligibility_grades', '年級資格設定不正確'],
 ]
 
 function toApiError(status, body) {

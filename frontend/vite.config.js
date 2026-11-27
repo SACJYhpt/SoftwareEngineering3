@@ -5,6 +5,9 @@ import { defineConfig } from 'vite'
 // /api is forwarded to the FastAPI backend, so the browser never needs CORS in development.
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    environment: 'jsdom',
+  },
   server: {
     proxy: {
       '/api': {

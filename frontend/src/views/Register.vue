@@ -81,11 +81,9 @@
 <script setup>
     import { computed, onMounted, reactive, ref, watch } from 'vue'
     import { request } from '../api'
-    import { IDENTITY_LABELS } from '../format'
+    import { GRADES, IDENTITY_LABELS } from '../format'
     import ResendVerification from '../components/ResendVerification.vue'
 
-    const GRADES = [1, 2, 3, 4].map((n) => ({ value: n, label: `大學部 ${n} 年級` }))
-        .concat([5, 6, 7].map((n) => ({ value: n, label: `研究所 ${n - 4} 年級` })))
     const FIELDS = ['email', 'name', 'identity', 'department_id', 'grade', 'password', 'confirm', 'consent']
 
     const form = reactive({ email: '', name: '', identity: '', department_id: '', grade: '', password: '', consent: false })
