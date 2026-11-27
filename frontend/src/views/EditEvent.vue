@@ -94,12 +94,17 @@
 
     onMounted(async () => {
         try {
-            const [event, typeList, deptList, officeList] = await Promise.all([
+            const [eventRes, typeRes, deptRes, officeRes] = await Promise.allSettled([
                 request(`/events/${route.params.id}`),
                 request('/event-types'),
                 request('/units?kind=department'),
                 request('/units?kind=office'),
             ])
+            if (eventRes.status === 'rejected') {
+                loadError.value = eventRes.reason.message
+                return
+            }
+            const event = eventRes.value
             if (['已結束', '已取消'].includes(event.status)) {
                 loadError.value = `活動${event.status}，不能再修改。`
                 return
@@ -107,11 +112,14 @@
             original = eventToForm(event)
             Object.assign(form, eventToForm(event))
             units.value = [event.unit]
-            types.value = typeList
-            departments.value = deptList
-            offices.value = officeList
-        } catch (e) {
-            loadError.value = e.message
+            const optionErrors = []
+            if (typeRes.status === 'fulfilled') types.value = typeRes.value
+            else optionErrors.push('活動類型：' + typeRes.reason.message)
+            if (deptRes.status === 'fulfilled') departments.value = deptRes.value
+            else optionErrors.push('系所清單：' + deptRes.reason.message)
+            if (officeRes.status === 'fulfilled') offices.value = officeRes.value
+            else optionErrors.push('行政單位清單：' + officeRes.reason.message)
+            if (optionErrors.length) formError.value = '部分表單選項載入失敗（' + optionErrors.join('；') + '）'
         } finally {
             loading.value = false
         }

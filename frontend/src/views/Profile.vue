@@ -30,10 +30,12 @@
             <template v-else>
                 <div :class="['field', { invalid: errors.department_id }]">
                     <label for="profile-department" class="required">{{ unitLabel }}</label>
-                    <select id="profile-department" v-model="form.department_id" :disabled="loadingUnits || submitting">
+                    <select id="profile-department" v-model="form.department_id" :disabled="loadingUnits || submitting"
+                        @change="departmentInactiveNotice = ''">
                         <option disabled value="">{{ loadingUnits ? '載入中…' : '請選擇' }}</option>
                         <option v-for="unit in units" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
                     </select>
+                    <span v-if="departmentInactiveNotice" class="hint">{{ departmentInactiveNotice }}</span>
                     <span v-if="errors.department_id" class="error">{{ errors.department_id }}</span>
                 </div>
 
@@ -79,6 +81,7 @@
     const units = ref([])
     const loadingUnits = ref(false)
     const loadError = ref('')
+    const departmentInactiveNotice = ref('')
     const formError = ref('')
     const successMessage = ref('')
     const submitting = ref(false)
@@ -107,6 +110,12 @@
         loadError.value = ''
         try {
             units.value = await request(`/units?kind=${unitKind.value}`)
+            if (form.department_id && !units.value.some((u) => Number(u.id) === Number(form.department_id))) {
+                form.department_id = ''
+                departmentInactiveNotice.value = '原單位已停用，請重新選擇'
+            } else {
+                departmentInactiveNotice.value = ''
+            }
         } catch (e) {
             loadError.value = `無法載入${unitLabel.value}清單：${e.message}`
         } finally {

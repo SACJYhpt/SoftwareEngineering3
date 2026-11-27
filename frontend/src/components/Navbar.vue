@@ -10,7 +10,7 @@
         </div>
         <div class="nav-actions">
             <template v-if="isLoggedIn">
-                <router-link to="/me/profile" class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</router-link>
+                <span class="nav-user" :title="auth.user && auth.user.email">{{ auth.user && auth.user.name }}</span>
                 <button class="btn btn-outline" :disabled="busy" @click="onLogout">登出</button>
             </template>
             <template v-else>
@@ -92,10 +92,6 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         color: var(--muted);
-        text-decoration: none;
-    }
-    .nav-user:hover {
-        color: var(--brand);
     }
     /* Small screens: brand and buttons on the first row, page links on their own row below. */
     @media (max-width: 640px) {

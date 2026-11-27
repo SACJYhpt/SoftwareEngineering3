@@ -13,7 +13,7 @@
                 </li>
             </ul>
             <div class="dialog-actions">
-                <button class="btn btn-outline" type="button" :disabled="submitting" @click="$emit('cancel')">
+                <button ref="cancelButton" class="btn btn-outline" type="button" :disabled="submitting" @click="$emit('cancel')">
                     返回修改
                 </button>
                 <button class="btn" type="button" :disabled="submitting" @click="$emit('confirm')">
@@ -25,15 +25,37 @@
 </template>
 
 <script setup>
+    import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
     import { formatRange } from '../format'
 
-    defineProps({
+    const props = defineProps({
         open: { type: Boolean, default: false },
         conflicts: { type: Array, default: () => [] },
         submitting: { type: Boolean, default: false },
     })
 
-    defineEmits(['cancel', 'confirm'])
+    const emit = defineEmits(['cancel', 'confirm'])
+    const cancelButton = ref(null)
+
+    function onKeydown(event) {
+        if (event.key === 'Escape' && props.open && !props.submitting) {
+            emit('cancel')
+        }
+    }
+
+    watch(() => props.open, async (isOpen) => {
+        if (isOpen) {
+            window.addEventListener('keydown', onKeydown)
+            await nextTick()
+            cancelButton.value?.focus()
+        } else {
+            window.removeEventListener('keydown', onKeydown)
+        }
+    }, { immediate: true })
+
+    onBeforeUnmount(() => {
+        window.removeEventListener('keydown', onKeydown)
+    })
 </script>
 
 <style scoped>

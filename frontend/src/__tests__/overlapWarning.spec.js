@@ -103,8 +103,9 @@ describe('C11 Schedule overlap warning - CreateEvent.vue & EditEvent.vue', () =>
     expect(dialog.text()).toContain(formatRange(OVERLAP_CONFLICT.start_time, OVERLAP_CONFLICT.end_time))
     expect(wrapper.find('.alert-error').exists()).toBe(false)
 
-    // Clicking 返回修改 closes dialog without sending another request.
-    await dialog.findAll('button')[0].trigger('click')
+    // Pressing Escape closes dialog without sending another request (L8).
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(mockRequest).toHaveBeenCalledTimes(4)
 
@@ -122,7 +123,7 @@ describe('C11 Schedule overlap warning - CreateEvent.vue & EditEvent.vue', () =>
     expect(mockRouterPush).toHaveBeenCalledWith('/events/55')
   })
 
-  it('saves directly without overlap dialog on CreateEvent when there is no same-unit overlap', async () => {
+  it('API 直接成功時不顯示提醒對話框，直接導向活動詳情頁', async () => {
     mockRequest
       .mockResolvedValueOnce(EVENT_TYPES)
       .mockResolvedValueOnce(DEPARTMENTS)

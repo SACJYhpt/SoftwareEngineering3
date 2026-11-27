@@ -195,4 +195,24 @@ describe('A10 Department and grade - Profile.vue', () => {
     expect(mockRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('學生須選擇年級')
   })
+
+  it('clears department_id and shows notice when current unit is inactive (L6)', async () => {
+    auth.user = {
+      id: 5,
+      name: '舊系所同學',
+      email: 'old@mail.ntou.edu.tw',
+      role: 'member',
+      identity: 'student',
+      department: { id: 999, name: '已停用學系' },
+      grade: 3,
+      managed_units: [],
+    }
+    mockRequest.mockResolvedValueOnce(DEPARTMENTS)
+
+    const wrapper = mount(Profile)
+    await flushPromises()
+
+    expect(wrapper.get('#profile-department').element.value).toBe('')
+    expect(wrapper.text()).toContain('原單位已停用，請重新選擇')
+  })
 })

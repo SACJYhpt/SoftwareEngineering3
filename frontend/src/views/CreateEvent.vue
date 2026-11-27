@@ -94,18 +94,19 @@
     }
 
     onMounted(async () => {
-        try {
-            const [typeList, deptList, officeList] = await Promise.all([
-                request('/event-types'),
-                request('/units?kind=department'),
-                request('/units?kind=office'),
-            ])
-            types.value = typeList
-            departments.value = deptList
-            offices.value = officeList
-        } catch (e) {
-            formError.value = '無法載入表單選項：' + e.message
-        }
+        const [typeRes, deptRes, officeRes] = await Promise.allSettled([
+            request('/event-types'),
+            request('/units?kind=department'),
+            request('/units?kind=office'),
+        ])
+        const loadErrors = []
+        if (typeRes.status === 'fulfilled') types.value = typeRes.value
+        else loadErrors.push('活動類型：' + typeRes.reason.message)
+        if (deptRes.status === 'fulfilled') departments.value = deptRes.value
+        else loadErrors.push('系所清單：' + deptRes.reason.message)
+        if (officeRes.status === 'fulfilled') offices.value = officeRes.value
+        else loadErrors.push('行政單位清單：' + officeRes.reason.message)
+        if (loadErrors.length) formError.value = '部分表單選項載入失敗（' + loadErrors.join('；') + '）'
     })
 </script>
 
