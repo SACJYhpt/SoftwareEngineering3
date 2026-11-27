@@ -140,7 +140,16 @@
                     </label>
                 </div>
             </div>
-            <span v-if="!departments.length && !offices.length" class="hint">尚無可選的系所或行政單位。</span>
+            <div v-if="inactiveDepartmentIds.length" class="unit-group">
+                <span class="subgroup-label">已停用單位（請取消勾選後再儲存）</span>
+                <div class="checkbox-grid">
+                    <label v-for="unitId in inactiveDepartmentIds" :key="unitId" class="checkbox-option">
+                        <input v-model="form.eligibility_department_ids" type="checkbox" :value="unitId" />
+                        <span>已停用單位（ID: {{ unitId }}）</span>
+                    </label>
+                </div>
+            </div>
+            <span v-if="!departments.length && !offices.length && !inactiveDepartmentIds.length" class="hint">尚無可選的系所或行政單位。</span>
             <span v-if="errors.eligibility_department_ids" class="error">{{ errors.eligibility_department_ids }}</span>
         </div>
 
@@ -174,7 +183,21 @@
     })
 
     const hasValidCapacity = computed(() => isPositiveInt(props.form.capacity))
-    const waitlistCapacityCustomized = ref(false)
+    const activeUnitIds = computed(() => new Set([
+        ...props.departments.map((unit) => Number(unit.id)),
+        ...props.offices.map((unit) => Number(unit.id)),
+    ]))
+    const inactiveDepartmentIds = computed(() => {
+        const selected = Array.isArray(props.form.eligibility_department_ids) ? props.form.eligibility_department_ids : []
+        return selected.map(Number).filter((id) => Number.isInteger(id) && id > 0 && !activeUnitIds.value.has(id))
+    })
+
+    // L1: in edit mode, treat an existing saved waitlist_capacity as customized so capacity edits don't overwrite it.
+    const waitlistCapacityCustomized = ref(
+        Boolean(props.editing && props.form.waitlist_enabled && String(props.form.waitlist_capacity).trim() !== '')
+    )
+    // M1: stash previous waitlist_capacity when unchecked so re-checking restores it.
+    const savedWaitlistCapacity = ref('')
 
     function onWaitlistCapacityInput() {
         waitlistCapacityCustomized.value = String(props.form.waitlist_capacity).trim() !== ''
@@ -182,6 +205,8 @@
 
     watch(() => props.form.capacity, (newCapacity, oldCapacity) => {
         if (!isPositiveInt(newCapacity)) {
+            const current = String(props.form.waitlist_capacity).trim()
+            if (current !== '') savedWaitlistCapacity.value = current
             props.form.waitlist_enabled = false
             props.form.waitlist_capacity = ''
             waitlistCapacityCustomized.value = false
@@ -199,6 +224,8 @@
 
     watch(() => props.form.waitlist_enabled, (enabled) => {
         if (!enabled) {
+            const current = String(props.form.waitlist_capacity).trim()
+            if (current !== '') savedWaitlistCapacity.value = current
             props.form.waitlist_capacity = ''
             waitlistCapacityCustomized.value = false
             props.errors.waitlist_enabled = ''
@@ -211,8 +238,13 @@
             return
         }
         if (String(props.form.waitlist_capacity).trim() === '') {
-            props.form.waitlist_capacity = defaultWaitlistCapacity(props.form.capacity)
-            waitlistCapacityCustomized.value = false
+            if (savedWaitlistCapacity.value !== '') {
+                props.form.waitlist_capacity = savedWaitlistCapacity.value
+                waitlistCapacityCustomized.value = true
+            } else {
+                props.form.waitlist_capacity = defaultWaitlistCapacity(props.form.capacity)
+                waitlistCapacityCustomized.value = false
+            }
         }
     })
 

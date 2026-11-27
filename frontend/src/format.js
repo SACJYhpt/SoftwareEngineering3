@@ -40,6 +40,40 @@ export const UNIT_KIND_LABELS = { department: '系所', office: '行政單位', 
 export const GRADES = [1, 2, 3, 4].map((n) => ({ value: n, label: `大學部 ${n} 年級` }))
   .concat([5, 6, 7].map((n) => ({ value: n, label: `研究所 ${n - 4} 年級` })))
 
+const GRADE_LABEL_MAP = Object.fromEntries(GRADES.map((item) => [item.value, item.label]))
+
+export function gradeLabel(grade) {
+  const num = Number(grade)
+  return GRADE_LABEL_MAP[num] || `${grade} 年級`
+}
+
+// Compose human-readable eligibility description using GRADES text labels (e.g. 5 -> 研究所 1 年級).
+export function formatEligibilityDescription(event, unitNameMap = null) {
+  if (!event) return '不限'
+  const parts = []
+  if (Array.isArray(event.eligibility_identities) && event.eligibility_identities.length) {
+    parts.push('身分別：' + event.eligibility_identities.map((key) => IDENTITY_LABELS[key] || key).join('／'))
+  }
+  if (Array.isArray(event.eligibility_department_ids) && event.eligibility_department_ids.length) {
+    const mappedNames = unitNameMap
+      ? event.eligibility_department_ids.map((id) => unitNameMap[id]).filter(Boolean)
+      : []
+    if (mappedNames.length === event.eligibility_department_ids.length) {
+      parts.push('系所／單位：' + mappedNames.join('／'))
+    } else {
+      const fromBackend = typeof event.eligibility_description === 'string'
+        ? event.eligibility_description.split('；').find((seg) => seg.startsWith('系所／單位：'))
+        : null
+      parts.push(fromBackend || ('系所／單位：' + event.eligibility_department_ids.map((id) => `單位 #${id}`).join('／')))
+    }
+  }
+  if (Array.isArray(event.eligibility_grades) && event.eligibility_grades.length) {
+    parts.push('年級：' + event.eligibility_grades.map(gradeLabel).join('／'))
+  }
+  if (parts.length > 0) return parts.join('；')
+  return event.eligibility_description || '不限'
+}
+
 // Token links arrive as /verify-email#token=...; read once, then drop it from the address bar.
 export function takeTokenFromHash() {
   const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || ''

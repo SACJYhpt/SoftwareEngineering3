@@ -118,8 +118,8 @@ describe('C07 Waitlist settings - eventForm.js', () => {
     expect(clearedCap).toEqual({ capacity: null, waitlist_enabled: false, waitlist_capacity: null })
   })
 
-  it('maps WAITLIST_BELOW_CURRENT to waitlist_capacity field', () => {
-    expect(EVENT_CODE_FIELDS.WAITLIST_BELOW_CURRENT).toBe('waitlist_capacity')
+  it('maps WAITLIST_BELOW_CURRENT to waitlist_enabled field (M1)', () => {
+    expect(EVENT_CODE_FIELDS.WAITLIST_BELOW_CURRENT).toBe('waitlist_enabled')
   })
 })
 
@@ -178,13 +178,41 @@ describe('C07 Waitlist settings - EventForm.vue', () => {
     expect(wrapper.find('#waitlist-capacity').exists()).toBe(false)
   })
 
-  it('shows WAITLIST_BELOW_CURRENT field error under waitlist_capacity input', async () => {
+  it('shows WAITLIST_BELOW_CURRENT error on waitlist_enabled even when waitlist is unchecked (M1)', async () => {
     const { wrapper, errors } = mountEventForm(
-      { capacity: '40', waitlist_enabled: true, waitlist_capacity: '10' },
+      { capacity: '40', waitlist_enabled: false, waitlist_capacity: '' },
       { editing: true },
     )
-    errors.waitlist_capacity = '候補上限不可低於現有候補人數；請先處理名單'
+    expect(wrapper.find('#waitlist-capacity').exists()).toBe(false)
+    errors.waitlist_enabled = '候補上限不可低於現有候補人數；請先處理名單'
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('候補上限不可低於現有候補人數；請先處理名單')
+  })
+
+  it('stashes waitlist_capacity on uncheck and restores it on re-check while sending null when unchecked (M1)', async () => {
+    const { wrapper, form } = mountEventForm({ capacity: '40' })
+    await wrapper.get('#waitlist-enabled').setValue(true)
+    await wrapper.get('#waitlist-capacity').setValue('12')
+    expect(Number(form.waitlist_capacity)).toBe(12)
+
+    await wrapper.get('#waitlist-enabled').setValue(false)
+    expect(form.waitlist_capacity).toBe('')
+    expect(eventFormToPayload(form)).toMatchObject({
+      waitlist_enabled: false,
+      waitlist_capacity: null,
+    })
+
+    await wrapper.get('#waitlist-enabled').setValue(true)
+    expect(String(form.waitlist_capacity)).toBe('12')
+  })
+
+  it('treats saved waitlist_capacity in edit mode as customized so changing capacity does not overwrite it (L1)', async () => {
+    const { wrapper, form } = mountEventForm(
+      { capacity: '40', waitlist_enabled: true, waitlist_capacity: '20' },
+      { editing: true },
+    )
+
+    await wrapper.get('#capacity').setValue('50')
+    expect(String(form.waitlist_capacity)).toBe('20')
   })
 })

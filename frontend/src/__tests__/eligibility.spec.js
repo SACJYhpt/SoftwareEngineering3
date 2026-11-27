@@ -185,6 +185,25 @@ describe('C08 Eligibility restriction - EventForm.vue', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('資格限制須使用啟用中的系所或行政單位')
   })
+
+  it('renders inactive unit IDs as removable checkboxes so edit mode is not blocked (H1)', async () => {
+    const original = makeValidForm({ eligibility_department_ids: [10, 99] })
+    const { wrapper, form } = mountEventForm(
+      { eligibility_department_ids: [10, 99] },
+      { editing: true },
+    )
+
+    expect(wrapper.text()).toContain('已停用單位（ID: 99）')
+    const inactiveCheckbox = wrapper.get('input[type="checkbox"][value="99"]')
+    expect(inactiveCheckbox.element.checked).toBe(true)
+
+    await inactiveCheckbox.setValue(false)
+    expect(form.eligibility_department_ids).toEqual([10])
+    expect(wrapper.text()).not.toContain('已停用單位（ID: 99）')
+    expect(eventFormToPayload(form, original)).toEqual({
+      eligibility_department_ids: [10],
+    })
+  })
 })
 
 describe('C08 Eligibility restriction - EventDetail.vue', () => {
@@ -192,11 +211,11 @@ describe('C08 Eligibility restriction - EventDetail.vue', () => {
     mockRequest.mockReset()
   })
 
-  it('displays eligibility_description on EventDetail when restrictions are set', async () => {
+  it('displays formatted grade text labels including graduate grade 5 -> 研究所 1 年級 (M3)', async () => {
     mockRequest.mockResolvedValueOnce(makeApiEvent({
       eligibility_department_ids: [10],
-      eligibility_grades: [3, 4],
-      eligibility_description: '系所／單位：資訊工程學系；年級：3／4',
+      eligibility_grades: [3, 4, 5],
+      eligibility_description: '系所／單位：資訊工程學系；年級：3／4／5',
     }))
 
     const wrapper = mount(EventDetail, {
@@ -205,7 +224,8 @@ describe('C08 Eligibility restriction - EventDetail.vue', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('報名資格')
-    expect(wrapper.text()).toContain('系所／單位：資訊工程學系；年級：3／4')
+    expect(wrapper.text()).toContain('系所／單位：資訊工程學系；年級：大學部 3 年級／大學部 4 年級／研究所 1 年級')
+    expect(wrapper.text()).not.toContain('年級：3／4／5')
   })
 
   it('displays 不限 on EventDetail when no eligibility restrictions are set', async () => {

@@ -139,6 +139,6 @@ export function eventFormToPayload(form, original = null) {
 // Backend error codes that belong to one field.
 export const EVENT_CODE_FIELDS = {
     EVENT_START_IN_PAST: 'start_time', UNIT_FORBIDDEN: 'unit_id', UNIT_NOT_FOUND: 'unit_id', UNIT_INACTIVE: 'unit_id',
-    EVENT_TYPE_INVALID: 'type', CAPACITY_BELOW_REGISTRATIONS: 'capacity', WAITLIST_BELOW_CURRENT: 'waitlist_capacity',
+    EVENT_TYPE_INVALID: 'type', CAPACITY_BELOW_REGISTRATIONS: 'capacity', WAITLIST_BELOW_CURRENT: 'waitlist_enabled',
     ELIGIBILITY_UNIT_INVALID: 'eligibility_department_ids',
 }

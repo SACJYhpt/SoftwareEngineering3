@@ -46,7 +46,7 @@
                     <dt>名額</dt>
                     <dd>{{ capacityText(event) }}</dd>
                     <dt>報名資格</dt>
-                    <dd>{{ event.eligibility_description || '不限' }}</dd>
+                    <dd>{{ eligibilityText }}</dd>
                 </dl>
                 <div v-if="event.status === '已取消' && event.cancellation_reason" class="alert alert-error">
                     活動已取消。取消原因：{{ event.cancellation_reason }}
@@ -108,8 +108,8 @@
                         <li v-for="condition in eligibilityError.conditions" :key="condition">{{ condition }}</li>
                     </ul>
                     <p class="eligibility-summary">{{ eligibilityError.message }}</p>
-                    <p v-if="event.eligibility_description && event.eligibility_description !== '不限'" class="eligibility-requirement">
-                        本活動資格限制：{{ event.eligibility_description }}
+                    <p v-if="eligibilityText !== '不限'" class="eligibility-requirement">
+                        本活動資格限制：{{ eligibilityText }}
                     </p>
                     <p class="eligibility-profile-link">
                         <router-link to="/me/profile">前往更新個人資料</router-link>
@@ -145,7 +145,7 @@
     import { useRoute, useRouter } from 'vue-router'
     import { download, request } from '../api'
     import { isLoggedIn, managedUnits } from '../auth'
-    import { STATUS_TONE, capacityText, formatDateTime, formatRange } from '../format'
+    import { STATUS_TONE, capacityText, formatDateTime, formatEligibilityDescription, formatRange } from '../format'
 
     const route = useRoute()
     const router = useRouter()
@@ -169,6 +169,7 @@
     const cancellationRequestPath = computed(() => `/events/${route.params.id}/cancellation-request`)
     const hasPendingCancellation = computed(() => event.value?.cancellation_request?.status === 'pending')
     const canManage = computed(() => event.value && managedUnits.value.some((unit) => unit.id === event.value.unit_id))
+    const eligibilityText = computed(() => formatEligibilityDescription(event.value))
 
     function isConflictClosed(item) {
         return Boolean(item?.registration_closed || item?.action === 'request_cancellation')
