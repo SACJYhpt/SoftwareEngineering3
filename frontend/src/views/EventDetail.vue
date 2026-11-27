@@ -81,7 +81,7 @@
                 <div v-if="hasPendingCancellation" class="alert alert-info" role="status">
                     取消申請審核中。若管理者尚未處理，系統將於 {{ formatDateTime(event.cancellation_request.auto_approve_at) }} 自動核准。
                 </div>
-                <button class="btn btn-large" :disabled="!action.enabled || submitting" @click="onRegister">
+                <button class="btn btn-large" :disabled="!action.enabled || submitting || switching" @click="onRegister">
                     {{ submitting ? '送出中…' : action.label }}
                 </button>
                 <p v-if="action.hint" class="muted hint">{{ action.hint }}</p>
@@ -90,7 +90,7 @@
                     <p v-if="event.can_cancel_registration && event.direct_cancel_deadline" class="muted hint cancel-deadline">
                         可直接取消至 {{ formatDateTime(event.direct_cancel_deadline) }} 前。
                     </p>
-                    <button v-if="event.can_cancel_registration" class="btn btn-outline btn-large cancel" :disabled="submitting" @click="onCancel">
+                    <button v-if="event.can_cancel_registration" class="btn btn-outline btn-large cancel" :disabled="submitting || switching" @click="onCancel">
                         取消報名
                     </button>
                     <router-link v-else-if="event.can_request_cancellation" class="btn btn-outline btn-large cancel" :to="cancellationRequestPath">
@@ -104,13 +104,10 @@
                 <!-- 報名資格不符提示 (ER-US-D03) -->
                 <div v-if="eligibilityError" class="alert alert-error eligibility-error" role="alert">
                     <strong>不符合報名資格</strong>
+                    <p class="eligibility-headline">{{ eligibilityHeadline || eligibilityError.message }}</p>
                     <ul v-if="eligibilityError.conditions.length" class="eligibility-conditions">
                         <li v-for="condition in eligibilityError.conditions" :key="condition">{{ condition }}</li>
                     </ul>
-                    <p class="eligibility-summary">{{ eligibilityError.message }}</p>
-                    <p v-if="eligibilityText !== '不限'" class="eligibility-requirement">
-                        本活動資格限制：{{ eligibilityText }}
-                    </p>
                     <p class="eligibility-profile-link">
                         <router-link to="/me/profile">前往更新個人資料</router-link>
                     </p>
@@ -119,6 +116,9 @@
                 <div v-if="conflictState" class="alert alert-error conflict-error" role="alert">
                     <strong>{{ conflictState.code === 'WAITLIST_CONFLICT' ? '與候補中的活動時間衝突' : '與已報名的活動時間衝突' }}</strong>
                     <p class="conflict-summary">{{ conflictState.message }}</p>
+                    <p v-if="!canSwitchConflicts && !switchBlockedByFull && hasOpenConflict" class="conflict-guide">
+                        目前無法一鍵改報名，請先處理已截止的活動，或分別前往原活動取消。
+                    </p>
                     <ul v-if="conflictState.conflicts.length" class="conflict-list">
                         <li v-for="item in conflictState.conflicts" :key="item.event_id" class="conflict-item">
                             <router-link :to="`/events/${item.event_id}`" class="conflict-name">{{ item.name }}</router-link>
@@ -128,11 +128,15 @@
                                 class="btn btn-outline btn-small conflict-cancel-link">
                                 申請取消
                             </router-link>
+                            <router-link v-else-if="!canSwitchConflicts" :to="`/events/${item.event_id}`"
+                                class="btn btn-outline btn-small conflict-goto-link">
+                                前往取消
+                            </router-link>
                         </li>
                     </ul>
                     <button v-if="canSwitchConflicts" class="btn btn-large conflict-switch-btn" type="button"
                         :disabled="switching || submitting" @click="onSwitchRegistration">
-                        {{ switching ? '改報名處理中…' : '取消原活動並改報名' }}
+                        {{ switching ? '改報名處理中…' : switchButtonLabel }}
                     </button>
                 </div>
             </aside>
@@ -145,7 +149,7 @@
     import { useRoute, useRouter } from 'vue-router'
     import { download, request } from '../api'
     import { isLoggedIn, managedUnits } from '../auth'
-    import { STATUS_TONE, capacityText, formatDateTime, formatEligibilityDescription, formatRange } from '../format'
+    import { STATUS_TONE, capacityText, formatDateTime, formatEligibilityDescription, formatEligibilityHeadline, formatRange } from '../format'
 
     const route = useRoute()
     const router = useRouter()
@@ -161,6 +165,7 @@
     const message = ref(null)
     const eligibilityError = ref(null)
     const conflictState = ref(null)
+    const switchBlockedByFull = ref(false)
     const shareMessage = ref('')
     const CANCEL_ACTION_TOKEN_KEY = 'ntou-cancellation-action-token'
     let resolvingCancellationLink = false
@@ -170,6 +175,7 @@
     const hasPendingCancellation = computed(() => event.value?.cancellation_request?.status === 'pending')
     const canManage = computed(() => event.value && managedUnits.value.some((unit) => unit.id === event.value.unit_id))
     const eligibilityText = computed(() => formatEligibilityDescription(event.value))
+    const eligibilityHeadline = computed(() => formatEligibilityHeadline(event.value))
 
     function isConflictClosed(item) {
         return Boolean(item?.registration_closed || item?.action === 'request_cancellation')
@@ -182,7 +188,10 @@
         return isConflictClosed(item) ? `${base}（已截止）` : base
     }
 
+    const hasOpenConflict = computed(() => (conflictState.value?.conflicts || []).some((item) => !isConflictClosed(item)))
+
     const canSwitchConflicts = computed(() => {
+        if (switchBlockedByFull.value) return false
         const list = conflictState.value?.conflicts || []
         if (list.length === 0) return false
         if (list.some((item) => isConflictClosed(item))) return false
@@ -190,6 +199,9 @@
     })
 
     const switchSourceStatus = computed(() => (canSwitchConflicts.value ? conflictState.value.conflicts[0].status : null))
+    const switchButtonLabel = computed(() => (
+        switchSourceStatus.value === 'waitlisted' ? '放棄原活動候補並改報名' : '取消原活動並改報名'
+    ))
 
     function captureCancellationToken() {
         if (!window.location.hash) return
@@ -321,6 +333,7 @@
         message.value = null
         eligibilityError.value = null
         conflictState.value = null
+        switchBlockedByFull.value = false
         try {
             await request(`/events/${route.params.id}/registrations/me`, { method: 'DELETE' })
             message.value = { ok: true, text: '已取消報名。報名截止前仍可再次報名。' }
@@ -365,6 +378,13 @@
         return { enabled: false, ...(reasons[e.status] || { label: '無法報名' }) }
     })
 
+    function setEligibilityError(error) {
+        eligibilityError.value = {
+            message: error.message,
+            conditions: Array.isArray(error.detail?.conditions) ? error.detail.conditions : [],
+        }
+    }
+
     async function onRegister() {
         if (!isLoggedIn.value) {
             router.push({ path: '/login', query: { redirect: route.fullPath } })
@@ -374,6 +394,7 @@
         message.value = null
         eligibilityError.value = null
         conflictState.value = null
+        switchBlockedByFull.value = false
         try {
             const result = await request(`/events/${route.params.id}/registrations`, { method: 'POST' })
             message.value = { ok: true, text: result.already_registered ? '你已經報名過這個活動。' : '報名成功！' }
@@ -383,10 +404,7 @@
                 return
             }
             if (e.code === 'ELIGIBILITY_MISMATCH') {
-                eligibilityError.value = {
-                    message: e.message,
-                    conditions: Array.isArray(e.detail?.conditions) ? e.detail.conditions : [],
-                }
+                setEligibilityError(e)
                 return
             }
             if (e.code === 'TIME_CONFLICT' || e.code === 'WAITLIST_CONFLICT') {
@@ -414,6 +432,7 @@
         }
         switching.value = true
         message.value = null
+        eligibilityError.value = null
         try {
             const result = await request(`/events/${route.params.id}/registrations/switch`, {
                 method: 'POST',
@@ -424,18 +443,33 @@
                 },
             })
             conflictState.value = null
+            switchBlockedByFull.value = false
             message.value = { ok: true, text: result?.message || '已取消原活動並完成改報名！' }
         } catch (e) {
             if (e.code === 'AUTH_REQUIRED') {
                 router.push({ path: '/login', query: { redirect: route.fullPath } })
                 return
             }
-            if (e.code === 'SOURCE_STATUS_CHANGED' && Array.isArray(e.detail?.conflicts)) {
-                conflictState.value = {
-                    code: e.detail.conflicts.some((item) => item.status === 'registered') ? 'TIME_CONFLICT' : 'WAITLIST_CONFLICT',
-                    message: e.message,
-                    conflicts: e.detail.conflicts,
+            if (e.code === 'ELIGIBILITY_MISMATCH') {
+                conflictState.value = null
+                setEligibilityError(e)
+                return
+            }
+            if (e.code === 'EVENT_FULL' || e.code === 'WAITLIST_FULL') {
+                switchBlockedByFull.value = true
+                message.value = { ok: false, text: `改報名失敗：${e.message}。原活動的報名／候補已保留，未做任何變更。` }
+                return
+            }
+            if (e.code === 'SOURCE_STATUS_CHANGED') {
+                if (Array.isArray(e.detail?.conflicts)) {
+                    conflictState.value = {
+                        code: e.detail.conflicts.some((item) => item.status === 'registered') ? 'TIME_CONFLICT' : 'WAITLIST_CONFLICT',
+                        message: e.message,
+                        conflicts: e.detail.conflicts,
+                    }
                 }
+                message.value = { ok: false, text: `改報名失敗：${e.message}。原活動的報名／候補已保留，未做任何變更。` }
+                return
             }
             message.value = { ok: false, text: `改報名失敗：${e.message}` }
         } finally {
@@ -450,6 +484,7 @@
         message.value = null
         eligibilityError.value = null
         conflictState.value = null
+        switchBlockedByFull.value = false
         await load()
         await resolveCancellationLink()
     }
@@ -458,6 +493,11 @@
 
     // Re-read personal status when the user logs in or out in another part of the page.
     watch(isLoggedIn, async (loggedIn) => {
+        if (!loggedIn) {
+            eligibilityError.value = null
+            conflictState.value = null
+            switchBlockedByFull.value = false
+        }
         await load()
         if (loggedIn) await resolveCancellationLink()
     })
@@ -576,8 +616,7 @@
         margin: 6px 0;
         padding-left: 20px;
     }
-    .eligibility-summary,
-    .eligibility-requirement,
+    .eligibility-headline,
     .eligibility-profile-link {
         margin: 6px 0 0;
         font-size: 0.92rem;
@@ -585,7 +624,8 @@
     .conflict-error {
         margin-top: 12px;
     }
-    .conflict-summary {
+    .conflict-summary,
+    .conflict-guide {
         margin: 6px 0 0;
         font-size: 0.92rem;
     }
@@ -608,7 +648,8 @@
         font-size: 0.88rem;
         margin-top: 2px;
     }
-    .conflict-cancel-link {
+    .conflict-cancel-link,
+    .conflict-goto-link {
         margin-top: 6px;
         display: inline-block;
     }

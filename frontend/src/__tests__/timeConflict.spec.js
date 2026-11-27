@@ -36,8 +36,8 @@ function makeEvent(overrides = {}) {
     description: '下午 15:00–17:00 活動',
     location: '資工系館',
     contact_information: 'cs@ntou.edu.tw',
-    start_time: '2030-05-10T07:00:00Z', // 15:00+08:00
-    end_time: '2030-05-10T09:00:00Z',   // 17:00+08:00
+    start_time: '2030-05-10T07:00:00Z',
+    end_time: '2030-05-10T09:00:00Z',
     registration_start: '2030-05-01T01:00:00Z',
     registration_deadline: '2030-05-09T10:00:00Z',
     capacity: 40,
@@ -89,12 +89,12 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
     }
   })
 
-  it('rejects overlapping event (15:00-17:00 vs 14:00-16:00), displays conflict name/time, and supports D11 switch', async () => {
+  it('rejects overlapping event, displays conflict name/time, and supports D11 switch for open registered conflict', async () => {
     const conflict = {
       event_id: 12,
       name: '程式競賽說明會',
-      start_time: '2030-05-10T06:00:00Z', // 14:00+08:00
-      end_time: '2030-05-10T08:00:00Z',   // 16:00+08:00
+      start_time: '2030-05-10T06:00:00Z',
+      end_time: '2030-05-10T08:00:00Z',
       status: 'registered',
       waitlist_position: null,
       registration_closed: false,
@@ -147,15 +147,24 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
     confirmSpy.mockRestore()
   })
 
-  it('registers successfully for back-to-back event (16:00-18:00 after 14:00-16:00)', async () => {
-    const adjacentEvent = makeEvent({
-      start_time: '2030-05-10T08:00:00Z', // 16:00+08:00
-      end_time: '2030-05-10T10:00:00Z',   // 18:00+08:00
-    })
+  it('uses waitlist-specific label "放棄原活動候補並改報名" for WAITLIST_CONFLICT (L3)', async () => {
+    const waitlistConflict = {
+      event_id: 15,
+      name: '候補中講座',
+      start_time: '2030-05-10T06:00:00Z',
+      end_time: '2030-05-10T08:00:00Z',
+      status: 'waitlisted',
+      waitlist_position: 2,
+      registration_closed: false,
+      action: 'switch',
+      action_path: '/events/15/registrations/me',
+    }
+    const conflictError = new ApiError(409, 'WAITLIST_CONFLICT', '與既有候補活動撞期', {}, { conflicts: [waitlistConflict] })
+
     mockRequest
-      .mockResolvedValueOnce(adjacentEvent)
-      .mockResolvedValueOnce({ already_registered: false, status: 'registered' })
-      .mockResolvedValueOnce({ ...adjacentEvent, my_registration_status: '已報名', can_register: false, registration_count: 6 })
+      .mockResolvedValueOnce(makeEvent())
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce(makeEvent())
 
     const wrapper = mountDetail()
     await flushPromises()
@@ -163,11 +172,12 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
     await wrapper.get('.action button.btn-large').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('報名成功！')
-    expect(wrapper.find('.conflict-error').exists()).toBe(false)
+    const conflictBox = wrapper.get('.conflict-error')
+    expect(conflictBox.text()).toContain('候補第 2 位')
+    expect(conflictBox.get('.conflict-switch-btn').text()).toBe('放棄原活動候補並改報名')
   })
 
-  it('shows cancellation-request link (E11) and hides switch button when conflicting event is closed', async () => {
+  it('shows cancellation-request link for closed conflict and "前往取消" link for open conflict when mixed (M4)', async () => {
     const closedConflict = {
       event_id: 99,
       name: '已截止之講座',
@@ -179,12 +189,23 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
       action: 'request_cancellation',
       action_path: '/events/99/cancellation-requests',
     }
+    const openConflict = {
+      event_id: 12,
+      name: '尚未截止工作坊',
+      start_time: '2030-05-10T07:00:00Z',
+      end_time: '2030-05-10T09:00:00Z',
+      status: 'registered',
+      waitlist_position: null,
+      registration_closed: false,
+      action: 'switch',
+      action_path: '/events/12/registrations/me',
+    }
     const conflictError = new ApiError(
       409,
       'TIME_CONFLICT',
-      '與既有報名或候補活動撞期，請選擇取消本次或確認改報名',
+      '與既有報名或候補活動撞期',
       {},
-      { code: 'TIME_CONFLICT', message: '與既有報名或候補活動撞期，請選擇取消本次或確認改報名', conflicts: [closedConflict] },
+      { conflicts: [closedConflict, openConflict] },
     )
 
     mockRequest
@@ -199,15 +220,18 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
     await flushPromises()
 
     const conflictBox = wrapper.get('.conflict-error')
-    expect(conflictBox.text()).toContain('已截止之講座')
-    expect(conflictBox.text()).toContain('已報名（已截止）')
     expect(conflictBox.find('.conflict-switch-btn').exists()).toBe(false)
+    expect(conflictBox.text()).toContain('請先處理已截止的活動，或分別前往原活動取消')
 
     const cancelLink = conflictBox.get('a[href="/events/99/cancellation-request"]')
     expect(cancelLink.text()).toBe('申請取消')
+
+    const gotoLink = conflictBox.get('.conflict-goto-link')
+    expect(gotoLink.attributes('href')).toBe('/events/12')
+    expect(gotoLink.text()).toBe('前往取消')
   })
 
-  it('shows backend error when switch fails due to EVENT_FULL', async () => {
+  it('states original registration is preserved and hides switch button when switch fails with EVENT_FULL (M5)', async () => {
     const conflict = {
       event_id: 12,
       name: '程式競賽說明會',
@@ -240,7 +264,46 @@ describe('D04 Time conflict check - EventDetail.vue', () => {
     await wrapper.get('.conflict-switch-btn').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('改報名失敗：名額已滿')
+    expect(wrapper.text()).toContain('改報名失敗：名額已滿。原活動的報名／候補已保留，未做任何變更。')
+    expect(wrapper.find('.conflict-switch-btn').exists()).toBe(false)
+    confirmSpy.mockRestore()
+  })
+
+  it('routes ELIGIBILITY_MISMATCH during switch to structured D03 eligibility error (L4)', async () => {
+    const conflict = {
+      event_id: 12,
+      name: '程式競賽說明會',
+      start_time: '2030-05-10T06:00:00Z',
+      end_time: '2030-05-10T08:00:00Z',
+      status: 'registered',
+      waitlist_position: null,
+      registration_closed: false,
+      action: 'switch',
+      action_path: '/events/12/registrations/me',
+    }
+    const conflictError = new ApiError(409, 'TIME_CONFLICT', '與既有報名撞期', {}, { conflicts: [conflict] })
+    const mismatchError = new ApiError(409, 'ELIGIBILITY_MISMATCH', '系所／單位不符', {}, { conditions: ['系所／單位不符'] })
+
+    mockRequest
+      .mockResolvedValueOnce(makeEvent({ eligibility_identities: ['student'], eligibility_department_ids: [10], eligibility_description: '身分別：學生；系所／單位：資訊工程學系' }))
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce(makeEvent({ eligibility_identities: ['student'], eligibility_department_ids: [10], eligibility_description: '身分別：學生；系所／單位：資訊工程學系' }))
+      .mockRejectedValueOnce(mismatchError)
+      .mockResolvedValueOnce(makeEvent({ eligibility_identities: ['student'], eligibility_department_ids: [10], eligibility_description: '身分別：學生；系所／單位：資訊工程學系' }))
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const wrapper = mountDetail()
+    await flushPromises()
+
+    await wrapper.get('.action button.btn-large').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('.conflict-switch-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.conflict-error').exists()).toBe(false)
+    expect(wrapper.get('.eligibility-error').text()).toContain('本活動限 資訊工程學系 學生')
     confirmSpy.mockRestore()
   })
 })

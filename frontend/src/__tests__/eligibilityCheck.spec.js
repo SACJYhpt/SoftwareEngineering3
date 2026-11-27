@@ -88,7 +88,7 @@ describe('D03 Eligibility check - EventDetail.vue', () => {
     }
   })
 
-  it('registers successfully when user meets eligibility restrictions', async () => {
+  it('shows success notice and no eligibility error when registration API succeeds', async () => {
     mockRequest
       .mockResolvedValueOnce(makeEvent())
       .mockResolvedValueOnce({ already_registered: false, status: 'registered' })
@@ -105,7 +105,7 @@ describe('D03 Eligibility check - EventDetail.vue', () => {
     expect(wrapper.find('.eligibility-error').exists()).toBe(false)
   })
 
-  it('shows structured eligibility error with failed conditions and profile link when rejected, and retains it after reload', async () => {
+  it('renders concise "本活動限…" headline without duplicate text, failed conditions, and profile link on ELIGIBILITY_MISMATCH (M2)', async () => {
     const mismatchError = new ApiError(
       409,
       'ELIGIBILITY_MISMATCH',
@@ -133,32 +133,34 @@ describe('D03 Eligibility check - EventDetail.vue', () => {
     expect(mockRequest).toHaveBeenCalledTimes(3)
     const errorBox = wrapper.get('.eligibility-error')
     expect(errorBox.text()).toContain('不符合報名資格')
+    expect(errorBox.get('.eligibility-headline').text()).toBe('本活動限 資訊工程學系 學生')
     expect(errorBox.text()).toContain('系所／單位不符')
-    expect(errorBox.text()).toContain('身分別：學生；系所／單位：資訊工程學系')
+    // No duplicate raw backend eligibility description inside the error box.
+    expect(errorBox.text()).not.toContain('本活動資格限制：')
+    expect(errorBox.text()).not.toContain('身分別：學生；系所／單位：資訊工程學系')
 
     const profileLink = errorBox.get('a[href="/me/profile"]')
     expect(profileLink.text()).toBe('前往更新個人資料')
   })
 
-  it('allows any ordinary user to register when no eligibility restrictions are set', async () => {
-    const unrestricted = makeEvent({
-      eligibility_identities: [],
-      eligibility_department_ids: [],
-      eligibility_grades: [],
-      eligibility_description: '不限',
-    })
+  it('clears eligibilityError when user logs out (L5)', async () => {
+    const mismatchError = new ApiError(409, 'ELIGIBILITY_MISMATCH', '系所／單位不符', {}, { conditions: ['系所／單位不符'] })
     mockRequest
-      .mockResolvedValueOnce(unrestricted)
-      .mockResolvedValueOnce({ already_registered: false, status: 'registered' })
-      .mockResolvedValueOnce({ ...unrestricted, my_registration_status: '已報名', can_register: false, registration_count: 6 })
+      .mockResolvedValueOnce(makeEvent())
+      .mockRejectedValueOnce(mismatchError)
+      .mockResolvedValueOnce(makeEvent())
+      .mockResolvedValueOnce(makeEvent({ my_registration_status: null }))
 
     const wrapper = mountDetail()
     await flushPromises()
 
     await wrapper.get('.action button.btn-large').trigger('click')
     await flushPromises()
+    expect(wrapper.find('.eligibility-error').exists()).toBe(true)
 
-    expect(wrapper.text()).toContain('報名成功！')
+    auth.token = null
+    auth.user = null
+    await flushPromises()
     expect(wrapper.find('.eligibility-error').exists()).toBe(false)
   })
 })
